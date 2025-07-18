@@ -1,2 +1,3 @@
-# thesis-rl-wind-botlc
-Repository for simulation of BOTLC task under unknown wind disturbances using reinforcement learning
+## Man Ching Melvin Chan z5361805
+
+Write read me document
