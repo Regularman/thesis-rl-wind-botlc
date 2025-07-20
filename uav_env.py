@@ -2,16 +2,17 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import matplotlib.pyplot as plt
+from matplotlib import cm, colors as mcolors
 from mpl_toolkits.mplot3d import Axes3D
 from typing import Tuple, Dict, List, Any, Optional
 import numpy.typing as npt
 from dataclasses import dataclass
+import dryden_wind
+from agent_dsui import Agent_DSUI
+from agent_dsui_2d import Agent_DSUI_2D
+import math
+import time
 import warnings
-
-@dataclass
-class Obstacle:
-    min_pos: npt.NDArray[np.float32]
-    max_pos: npt.NDArray[np.float32]
 
 class UAVEnv(gym.Env):
     """A custom Gymnasium environment for UAV navigation in 3D space with turbulent wind."""
@@ -48,33 +49,7 @@ class UAVEnv(gym.Env):
         self.base_energy_cost = 0.1  # Base energy cost for any movement
         self.wind_resistance_factor = 0.5  # Factor for wind resistance energy cost
         self.energy_penalty_weight = 0.2  # Weight for energy consumption in reward
-        
-        # Initialize wind field with more realistic turbulent components
-        self.wind = np.zeros((self.grid_size, self.grid_size, self.grid_size, 3), dtype=np.float32)
-        self.wind_phase = np.random.uniform(0, 2*np.pi, (self.grid_size, self.grid_size, self.grid_size, 3))
-        self.wind_frequency = 0.1  # Wind change frequency
-        self.wind_scale = 0.5  # Scale of wind variations
-        self.wind_noise = 0.2  # Random noise in wind
-        
-        ############
-        ## CHANGE ##
-        ############
-        # Initialize obstacles (cubes in the environment)
-        self.obstacles: List[Obstacle] = [
-            Obstacle(
-                min_pos=np.array([5, 5, 5], dtype=np.float32),
-                max_pos=np.array([7, 7, 7], dtype=np.float32)
-            ),
-            Obstacle(
-                min_pos=np.array([12, 12, 12], dtype=np.float32),
-                max_pos=np.array([14, 14, 14], dtype=np.float32)
-            ),
-            Obstacle(
-                min_pos=np.array([8, 8, 8], dtype=np.float32),
-                max_pos=np.array([10, 10, 10], dtype=np.float32)
-            )
-        ]
-        
+
         # Initialize state
         self.current_pos: Optional[npt.NDArray[np.float32]] = None
         self.step_count: int = 0
@@ -85,6 +60,14 @@ class UAVEnv(gym.Env):
         self.fig: Optional[plt.Figure] = None
         self.ax: Optional[Axes3D] = None
         
+        # Add in agents
+        self.agent = Agent_DSUI_2D(initial_agent_state=np.array([10.0,10.0,10.0, 0.0, 0.0, 0.0]), initial_agent_estimation=None)
+
+        # Add in target (Assume stationary target for now)
+        ############
+        ## CHANGE ##
+        ############
+
         # Initialize the environment
         self.reset()
     
@@ -103,93 +86,40 @@ class UAVEnv(gym.Env):
         self.current_pos = self.start_pos.copy()
         self.step_count = 0
         self.total_energy_consumed = 0.0
+
+        # Initialize wind field with more realistic turbulent components
+        self.wind = np.zeros((self.grid_size, self.grid_size, self.grid_size, 3), dtype=np.float32)
+        wind_along, wind_cross, wind_vertical = dryden_wind.dryden_wind_velocities(height=10, airspeed=5)
+        self.wind_along = np.multiply(np.array(wind_along),10)
+        self.wind_cross = np.multiply(np.array(wind_cross), 10)
+        self.wind_vertical = np.multiply(np.array(wind_vertical), 10)
+        
         self._update_wind()
         
         observation = self._get_obs()
         info = self._get_info()
         
-        if self.render_mode == "human":
-            self._render_frame()
+        # if self.render_mode == "human":
+        #     self._render_frame()
             
         return observation, info
     
-    def step(self, action: npt.NDArray[np.float32]) -> Tuple[npt.NDArray[np.float32], float, bool, bool, Dict[str, Any]]:
+    def step(self):
         """Execute one time step within the environment.
         
         Args:
             action (np.ndarray): The action to take.
-            
-        Returns:
-            Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]: 
-                Observation, reward, terminated, truncated, info.
         """
+        # self._get_wind_at_pos(self.agent.get_position())
+        # self.agent.act(np.array([self.target_pos[0], np.array(self.target_pos[1])]), self._get_wind_at_pos(self.agent.get_position()))
+        self.agent.act(np.array([self.target_pos[0], np.array(self.target_pos[1])]))
+        self._update_wind()
         self.step_count += 1
         
-        # Clip action to valid range
-        action = np.clip(action, -1, 1)
-        
-        # Calculate new position
-        new_pos = self.current_pos + action
-        
-        # Check if new position is within bounds
-        if not self._is_within_bounds(new_pos):
-            new_pos = np.clip(new_pos, 0, self.grid_size - 1)
-        
-        # Check for obstacle collision
-        if self._check_collision(new_pos):
-            new_pos = self.current_pos  # Stay in current position if collision
-        
-        # Update wind field
-        self._update_wind()
-        
-        # Get wind at current position
-        wind = self._get_wind_at_pos(self.current_pos)
-        
-        # Calculate energy cost
-        movement_energy = self.base_energy_cost * np.linalg.norm(action)
-        
-        # Enhanced wind resistance energy cost
-        wind_magnitude = np.linalg.norm(wind)
-        if wind_magnitude > 0:
-            wind_direction = wind / wind_magnitude
-            action_against_wind = np.dot(action, wind_direction)
-            wind_resistance = self.wind_resistance_factor * wind_magnitude * max(0, action_against_wind)
-        else:
-            wind_resistance = 0
-        
-        total_energy_cost = movement_energy + wind_resistance
-        self.total_energy_consumed += total_energy_cost
-        
-        # Update position
-        self.current_pos = new_pos
-        
-        # Enhanced reward calculation
-        distance_to_target = np.linalg.norm(self.current_pos - self.target_pos)
-        distance_reward = -distance_to_target
-        energy_penalty = -self.energy_penalty_weight * total_energy_cost
-        
-        # Progress reward (encourages moving towards target)
-        progress = np.linalg.norm(self.current_pos - self.start_pos) - np.linalg.norm(self.target_pos - self.start_pos)
-        progress_reward = 0.1 * progress
-        
-        reward = distance_reward + energy_penalty + progress_reward
-        
-        # Check if target reached (terminated)
-        terminated = distance_to_target < self.target_threshold
-        if terminated:
-            reward += 100  # Bonus for reaching target
-        
-        # Check if maximum steps reached (truncated)
-        truncated = self.step_count >= self.max_steps
-        
-        observation = self._get_obs()
-        info = self._get_info()
-        
-        if self.render_mode == "human":
-            self._render_frame()
-        
-        return observation, reward, terminated, truncated, info
-    
+
+    def agent_get_info(self):
+        return self.agent.trajectory, self.agent.distance_error_list
+
     def _get_obs(self) -> npt.NDArray[np.float32]:
         """Get current observation.
         
@@ -212,7 +142,7 @@ class UAVEnv(gym.Env):
             "current_wind": self._get_wind_at_pos(self.current_pos)
         }
     
-    def _get_wind_at_pos(self, pos: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def _get_wind_at_pos(self, pos):
         """Get wind vector at given position.
         
         Args:
@@ -222,7 +152,7 @@ class UAVEnv(gym.Env):
             np.ndarray: Wind vector at the given position.
         """
         x, y, z = np.clip(pos.astype(int), 0, self.grid_size - 1)
-        return self.wind[x, y, z].astype(np.float32)
+        return self.wind[x, y, z]
     
     def _is_within_bounds(self, pos: npt.NDArray[np.float32]) -> bool:
         """Check if position is within grid bounds.
@@ -235,42 +165,19 @@ class UAVEnv(gym.Env):
         """
         return np.all(pos >= 0) and np.all(pos < self.grid_size)
     
-    def _check_collision(self, pos: npt.NDArray[np.float32]) -> bool:
-        """Check if position collides with any obstacle.
-        
-        Args:
-            pos (np.ndarray): Position to check.
-            
-        Returns:
-            bool: True if position collides with an obstacle.
-        """
-        for obstacle in self.obstacles:
-            if (np.all(pos >= obstacle.min_pos) and np.all(pos <= obstacle.max_pos)):
-                return True
-        return False
-    
     def _update_wind(self) -> None:
-        """Update wind field with more realistic turbulent components."""
-        t = self.step_count * self.wind_frequency
+        """ Updating according to the Dryden turbulence model stored in the environment variable, 
+        if turbulence time frame is exceeded, then wind will remain static
+        """
+        if self.step_count < len(self.wind_along):
+            for i in range(0, self.grid_size):
+                for j in range(0, self.grid_size):
+                    for k in range(0, self.grid_size):
+                        self.wind[i,j,k] = np.array([self.wind_along[self.step_count], 
+                                            self.wind_cross[self.step_count], 
+                                            self.wind_vertical[self.step_count]])
         
-        # Base wind with multiple frequencies for more realistic turbulence
-        base_wind = (
-            np.sin(t + self.wind_phase) * 0.5 +
-            np.sin(2*t + self.wind_phase) * 0.3 +
-            np.sin(0.5*t + self.wind_phase) * 0.2
-        ) * self.wind_scale
-        
-        # Add random noise
-        random_component = np.random.uniform(-self.wind_noise, self.wind_noise, self.wind.shape)
-        
-        # Smooth the wind field
-        smoothed_wind = np.zeros_like(self.wind)
-        for i in range(1, self.grid_size-1):
-            for j in range(1, self.grid_size-1):
-                for k in range(1, self.grid_size-1):
-                    smoothed_wind[i,j,k] = np.mean(self.wind[i-1:i+2, j-1:j+2, k-1:k+2], axis=(0,1,2))
-        
-        self.wind = (base_wind + random_component + 0.3 * smoothed_wind).astype(np.float32)
+        self.step_count += 1
     
     def _render_frame(self) -> None:
         """Render the current frame."""
@@ -279,39 +186,6 @@ class UAVEnv(gym.Env):
             self.ax = self.fig.add_subplot(111, projection='3d')
         
         self.ax.clear()
-        
-        # Plot obstacles
-        for obstacle in self.obstacles:
-            min_pos = obstacle.min_pos
-            max_pos = obstacle.max_pos
-            
-            # Create cube vertices
-            vertices = np.array([
-                [min_pos[0], min_pos[1], min_pos[2]],
-                [max_pos[0], min_pos[1], min_pos[2]],
-                [max_pos[0], max_pos[1], min_pos[2]],
-                [min_pos[0], max_pos[1], min_pos[2]],
-                [min_pos[0], min_pos[1], max_pos[2]],
-                [max_pos[0], min_pos[1], max_pos[2]],
-                [max_pos[0], max_pos[1], max_pos[2]],
-                [min_pos[0], max_pos[1], max_pos[2]]
-            ])
-            
-            # Define faces
-            faces = [
-                [vertices[0], vertices[1], vertices[2], vertices[3]],  # bottom
-                [vertices[4], vertices[5], vertices[6], vertices[7]],  # top
-                [vertices[0], vertices[1], vertices[5], vertices[4]],  # front
-                [vertices[2], vertices[3], vertices[7], vertices[6]],  # back
-                [vertices[0], vertices[3], vertices[7], vertices[4]],  # left
-                [vertices[1], vertices[2], vertices[6], vertices[5]]   # right
-            ]
-            
-            # Plot each face
-            for face in faces:
-                face = np.array(face)
-                x, y, z = face[:, 0], face[:, 1], face[:, 2]
-                self.ax.plot_trisurf(x, y, z, color='red', alpha=0.2)
         
         # Plot UAV position
         self.ax.scatter(self.current_pos[0], self.current_pos[1], self.current_pos[2], 
@@ -346,6 +220,52 @@ class UAVEnv(gym.Env):
         plt.draw()
         plt.pause(0.01)
     
+    def visualise_wind(self, ax,fig): 
+
+        normalize_magnitude = lambda mags: (mags - np.min(mags)) / (np.max(mags) - np.min(mags) + 1e-8)
+
+        if ax is None:
+            fig = plt.figure(figsize=(10,10))
+            axes = fig.add_subplot(111, projection="3d")
+        else: 
+            axes = ax
+
+        positions = []
+        directions = []
+        magnitudes = []
+        # Plot wind vectors (subsampled)
+        step = 4  # Plot every 4th point
+        for i in range(0, self.grid_size, step):
+            for j in range(0, self.grid_size, step):
+                for k in range(0, self.grid_size, step):
+                    wind = self.wind[i,j,k]
+                    positions.append((i, j, k))
+                    directions.append(wind)
+                    magnitudes.append(np.linalg.norm(wind))
+        positions = np.array(positions)
+        directions = np.array(directions)
+        magnitudes = np.array(magnitudes)
+
+        # Get colormap colors based on normalized magnitude on an abolsute scale
+        vmin = 0
+        vmax = 3  # You can adjust based on expected wind max
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+        cmap = cm.inferno
+        colors_mapped = cmap(norm(magnitudes))
+
+        axes.quiver(
+            positions[:,0], positions[:,1], positions[:,2], 
+            directions[:,0], directions[:,1], directions[:,2],
+            length=1.5,  
+            color=colors_mapped,
+            alpha=1, 
+            linewidth=3)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])  # Required for colorbar
+        # Only add colorbar if it doesn't already exist
+        if not hasattr(self, 'colorbar') or self.colorbar is None:
+            self.colorbar = fig.colorbar(sm, ax=ax, label='Wind Magnitude (m/s)', shrink=0.25)
+
     def render(self) -> Optional[np.ndarray]:
         """Render the environment.
         
