@@ -3,7 +3,7 @@ import math
 
 
 class AgentBase_2D:
-    def __init__(self,initial_agent_state=None,initial_agent_estimation=None):
+    def __init__(self, desired_radius, initial_agent_state=None,initial_agent_estimation=None):
 
         if initial_agent_state is not None:
             self.position = np.array(initial_agent_state[:2])
@@ -22,8 +22,8 @@ class AgentBase_2D:
 
 
 
-        self.desired_radius = 1
-        self.control_frequency = 50
+        self.desired_radius = desired_radius
+        self.control_frequency = 100
 
         self.tagential_gain = 60
         self.distance_gain = 10
@@ -33,8 +33,7 @@ class AgentBase_2D:
         self.distance_error_list = []
         self.pose_estimation_error_list = []
         self.circumnavigation_error_list = []
-
-
+        self.wind_estimation = []
 
     def act(self, *args, **kwargs):
         raise NotImplementedError("The act method must be implemented in the derived class.")
@@ -51,6 +50,7 @@ class AgentBase_2D:
         self.distance_error_list = []
         self.pose_estimation_error_list = []
         self.circumnavigation_error_list = []
+   
     def get_state(self):
         return [self.position, self.velocity, self.yaw]
     

@@ -5,9 +5,10 @@ import dryden_wind
 from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.ndimage import zoom
 
-def main():
-  env = UAVEnv(render_mode="human")
+def main(wind_strength, desired_radius):
+  env = UAVEnv(render_mode="human", desired_radius= desired_radius, wind_strength=wind_strength)
   fig = plt.figure(figsize=(10,10))
   # axes = fig.add_subplot(111, projection="3d")
   axes = fig.add_subplot(111)
@@ -17,10 +18,10 @@ def main():
   ## computational efficiency
   # env = DummyVecEnv([lambda: env])
 
-  for it in tqdm(range(1000)):
+  for it in tqdm(range(100000)):
     env.step()
   
-  trajectory, distance_err_list = env.agent_get_info()
+  trajectory, circum_error_list, wind_estim = env.agent_get_info()
   trajectory = np.array(trajectory)
 
   # axes.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], 'x-',  alpha=0.5)
@@ -28,13 +29,32 @@ def main():
   axes.plot(trajectory[:,0], trajectory[:,1], 'x-',  alpha=0.5)
   axes.scatter(trajectory[-1][0], trajectory[-1][1], label="END")
   axes.scatter(env.target_pos[0], env.target_pos[1], s=80, marker="X",color="black", label="TARGET")
+  axes.set_title(f"Wind strength = {wind_strength}, desired radius = {desired_radius}")
   # axes.scatter(env.target_pos[0], env.target_pos[1], env.target_pos[2], s=80, marker="X",color="black", label="TARGET")
   axes.legend()
 
   fig_err = plt.figure()
   axes_err = fig_err.add_subplot(111)
-  axes_err.plot(range(len(distance_err_list)), distance_err_list)
+  axes_err.plot(range(len(circum_error_list)), circum_error_list)
+  axes_err.set_title("Circumnavigation error")
+
+  fig_wind = plt.figure()
+  axes_wind = fig_wind.add_subplot(111)
+  along_wind = np.array(wind_estim)[:,0]
+  across_wind = np.array(wind_estim)[:,1]
+
+  along_wind = zoom(along_wind, 1.0/env.agent.control_frequency)
+  across_wind = zoom(across_wind, 1.0/env.agent.control_frequency)
+  axes_wind.plot(range(len(along_wind)), along_wind, color="red", alpha=0.5, label="along wind estimation")
+  axes_wind.plot(range(len(across_wind)), across_wind, color="blue", alpha=0.5, label="across wind estimation")
+  axes_wind.plot(range(len(env.wind_along)), env.wind_along, color="red", linestyle="--", alpha=0.3, label="true along wind")
+  axes_wind.plot(range(len(env.wind_cross)), env.wind_cross, color="blue", linestyle="--", alpha=0.3, label="true across wind")
+  axes_wind.legend()
+  axes_wind.set_title("Estimated vs true wind")
+  axes.set_xlabel("Time (s)")
+  axes.set_ylabel("wind speed (m/s)")
+
   plt.show()
 
 if __name__ == "__main__":
-  main()
+  main(wind_strength=35, desired_radius=6)

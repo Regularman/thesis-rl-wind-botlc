@@ -9,6 +9,7 @@ import numpy.typing as npt
 from dataclasses import dataclass
 import dryden_wind
 from agent_dsui import Agent_DSUI
+from agent_dsui_2d_wind_estimator import Agent_DSUI_wind_2D
 from agent_dsui_2d import Agent_DSUI_2D
 import math
 import time
@@ -19,7 +20,7 @@ class UAVEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
     
-    def __init__(self, render_mode: Optional[str] = None) -> None:
+    def __init__(self, wind_strength, desired_radius, render_mode: Optional[str] = None) -> None:
         """Initialize the UAV environment.
         
         Args:
@@ -61,7 +62,9 @@ class UAVEnv(gym.Env):
         self.ax: Optional[Axes3D] = None
         
         # Add in agents
-        self.agent = Agent_DSUI_2D(initial_agent_state=np.array([10.0,10.0,10.0, 0.0, 0.0, 0.0]), initial_agent_estimation=None)
+        self.agent = Agent_DSUI_wind_2D(desired_radius=desired_radius, 
+                                   initial_agent_state=np.array([10.0, 10.0, 10.0, 0.0, 0.0, 0.0]), 
+                                   initial_agent_estimation=[17.0, 17.0, 0.0, 0.0])
 
         # Add in target (Assume stationary target for now)
         ############
@@ -69,9 +72,9 @@ class UAVEnv(gym.Env):
         ############
 
         # Initialize the environment
-        self.reset()
+        self.reset(wind_multiplier=wind_strength)
     
-    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[npt.NDArray[np.float32], Dict[str, Any]]:
+    def reset(self, *, wind_multiplier, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[npt.NDArray[np.float32], Dict[str, Any]]:
         """Reset the environment to initial state.
         
         Args:
@@ -90,9 +93,9 @@ class UAVEnv(gym.Env):
         # Initialize wind field with more realistic turbulent components
         self.wind = np.zeros((self.grid_size, self.grid_size, self.grid_size, 3), dtype=np.float32)
         wind_along, wind_cross, wind_vertical = dryden_wind.dryden_wind_velocities(height=10, airspeed=5)
-        self.wind_along = np.multiply(np.array(wind_along),10)
-        self.wind_cross = np.multiply(np.array(wind_cross), 10)
-        self.wind_vertical = np.multiply(np.array(wind_vertical), 10)
+        self.wind_along = np.multiply(np.array(wind_along), wind_multiplier)
+        self.wind_cross = np.multiply(np.array(wind_cross), wind_multiplier)
+        self.wind_vertical = np.multiply(np.array(wind_vertical), wind_multiplier)
         
         max_wind = 0
 
@@ -118,15 +121,23 @@ class UAVEnv(gym.Env):
         Args:
             action (np.ndarray): The action to take.
         """
-        # self._get_wind_at_pos(self.agent.get_position())
-        # self.agent.act(np.array([self.target_pos[0], np.array(self.target_pos[1])]), self._get_wind_at_pos(self.agent.get_position()))
-        self.agent.act(np.array([self.target_pos[0], self.target_pos[1]]))
-        self._update_wind()
+        frequency = self.agent.control_frequency
+
+        ## Treat wind as linear interpolation between timesteps
+        if math.floor(self.step_count/frequency) < len(self.wind_along) - 1:
+            wind_t1 = self.wind_along[math.floor(self.step_count/frequency)]
+            wind_t2 = self.wind_along[math.floor(self.step_count/frequency) + 1]
+            wind = wind_t1 + self.step_count%frequency*(wind_t2-wind_t1)
+        else:
+            wind = np.array([0,0])
+        self.agent.act(np.array([self.target_pos[0], self.target_pos[1]]), wind)
+        if frequency % 1000 == 0: 
+            self._update_wind()
         self.step_count += 1
         
 
     def agent_get_info(self):
-        return self.agent.trajectory, self.agent.distance_error_list
+        return self.agent.trajectory, self.agent.circumnavigation_error_list, self.agent.wind_estimation
 
     def _get_obs(self) -> npt.NDArray[np.float32]:
         """Get current observation.
@@ -184,8 +195,6 @@ class UAVEnv(gym.Env):
                         self.wind[i,j,k] = np.array([self.wind_along[self.step_count], 
                                             self.wind_cross[self.step_count], 
                                             self.wind_vertical[self.step_count]])
-        
-        self.step_count += 1
     
     def _render_frame(self) -> None:
         """Render the current frame."""
@@ -229,8 +238,6 @@ class UAVEnv(gym.Env):
         plt.pause(0.01)
     
     def visualise_wind(self, ax,fig,): 
-
-        normalize_magnitude = lambda mags: (mags - np.min(mags)) / (np.max(mags) - np.min(mags) + 1e-8)
 
         if ax is None:
             fig = plt.figure(figsize=(10,10))
