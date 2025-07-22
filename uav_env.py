@@ -94,6 +94,14 @@ class UAVEnv(gym.Env):
         self.wind_cross = np.multiply(np.array(wind_cross), 10)
         self.wind_vertical = np.multiply(np.array(wind_vertical), 10)
         
+        max_wind = 0
+
+        for i, wind in enumerate(self.wind_along):
+            mag = math.sqrt(self.wind_along[i]**2 + self.wind_cross[i]**2 + self.wind_vertical[i]**2)
+            if mag> max_wind:
+                max_wind = mag
+        self.max_wind = max_wind
+    
         self._update_wind()
         
         observation = self._get_obs()
@@ -112,7 +120,7 @@ class UAVEnv(gym.Env):
         """
         # self._get_wind_at_pos(self.agent.get_position())
         # self.agent.act(np.array([self.target_pos[0], np.array(self.target_pos[1])]), self._get_wind_at_pos(self.agent.get_position()))
-        self.agent.act(np.array([self.target_pos[0], np.array(self.target_pos[1])]))
+        self.agent.act(np.array([self.target_pos[0], self.target_pos[1]]))
         self._update_wind()
         self.step_count += 1
         
@@ -220,7 +228,7 @@ class UAVEnv(gym.Env):
         plt.draw()
         plt.pause(0.01)
     
-    def visualise_wind(self, ax,fig): 
+    def visualise_wind(self, ax,fig,): 
 
         normalize_magnitude = lambda mags: (mags - np.min(mags)) / (np.max(mags) - np.min(mags) + 1e-8)
 
@@ -234,21 +242,23 @@ class UAVEnv(gym.Env):
         directions = []
         magnitudes = []
         # Plot wind vectors (subsampled)
-        step = 4  # Plot every 4th point
+        step = 4  # Plot every 4th point             
+
         for i in range(0, self.grid_size, step):
             for j in range(0, self.grid_size, step):
                 for k in range(0, self.grid_size, step):
                     wind = self.wind[i,j,k]
                     positions.append((i, j, k))
-                    directions.append(wind)
-                    magnitudes.append(np.linalg.norm(wind))
+                    magnitude = np.linalg.norm(wind) 
+                    directions.append(np.array([wind[0]/magnitude, wind[1]/magnitude, wind[2]/magnitude]))
+                    magnitudes.append(magnitude)
         positions = np.array(positions)
         directions = np.array(directions)
         magnitudes = np.array(magnitudes)
 
         # Get colormap colors based on normalized magnitude on an abolsute scale
         vmin = 0
-        vmax = 3  # You can adjust based on expected wind max
+        vmax = math.ceil(self.max_wind) # You can adjust based on expected wind max
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
         cmap = cm.inferno
         colors_mapped = cmap(norm(magnitudes))

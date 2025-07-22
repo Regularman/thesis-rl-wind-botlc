@@ -22,7 +22,7 @@ class AgentBase_2D:
 
 
 
-        self.desired_radius = 10
+        self.desired_radius = 1
         self.control_frequency = 50
 
         self.tagential_gain = 60

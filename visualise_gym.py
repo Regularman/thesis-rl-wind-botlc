@@ -17,7 +17,7 @@ def main():
   ## computational efficiency
   # env = DummyVecEnv([lambda: env])
 
-  for it in tqdm(range(20)):
+  for it in tqdm(range(1000)):
     env.step()
   
   trajectory, distance_err_list = env.agent_get_info()

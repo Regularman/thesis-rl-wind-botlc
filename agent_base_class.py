@@ -35,7 +35,7 @@ class AgentBase:
     def act(self, *args, **kwargs):
         raise NotImplementedError("The act method must be implemented in the derived class.")
     
-    def reset(self,initial_agent_state,initial_agent_estimation):
+    def reset(self,initial_agent_state,initial_agent_estimation): 
         self.position = np.array(initial_agent_state[:3])
         self.velocity = np.array(initial_agent_state[3:])
 

@@ -42,10 +42,10 @@ class Agent_DSUI_2D(AgentBase_2D):
         self.estimated_state_trajectory.append(self.estimated_state)
 
         d_correction = self.prev_d_correction  + 0.02*self.discrete_time_gain*estimated_error
-        output_vector = (self.distance_gain * (estimated_error + d_correction) * bearing  + 
-                        (self.tagential_gain - tangential_bearing.transpose() @ self.estimated_state[2:]) * tangential_bearing + 
-                        self.estimated_state[2:])
-        
+        # output_vector = (self.distance_gain * (estimated_error + d_correction) * bearing  + 
+        #                 (self.tagential_gain - tangential_bearing.transpose() @ self.estimated_state[2:]) * tangential_bearing + 
+        #                 self.estimated_state[2:])
+        output_vector = (estimated_error)*bearing+(self.tagential_gain-tangential_bearing.transpose()@self.estimated_state[2:])*tangential_bearing+self.estimated_state[2:]
         # Apply control action
         self.position = self.position + output_vector / self.control_frequency
         
