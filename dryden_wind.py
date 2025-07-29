@@ -100,13 +100,10 @@ def dryden_wind_velocities(height, airspeed):
     num_samples = 1000
     
     # the random number seed used same as from SIMULINK blockset
-    np.random.seed(23341)
     samples1 = 10*np.random.normal(mean, std, size= num_samples)
 
-    np.random.seed(23342)
     samples2 = 10*np.random.normal(mean, std, size= num_samples)
 
-    np.random.seed(23343)
     samples3 = 10*np.random.normal(mean, std, size= num_samples)
 
     #generate tranfer function for dryden wind speeds in along wind direction, cross-wind, and vertical-wind directions

@@ -18,7 +18,7 @@ def main(wind_strength, desired_radius):
   ## computational efficiency
   # env = DummyVecEnv([lambda: env])
 
-  for it in tqdm(range(100000)):
+  for it in tqdm(range(int(1000*env.agent.control_frequency))):
     env.step()
   
   trajectory, circum_error_list, wind_estim = env.agent_get_info()
@@ -26,13 +26,15 @@ def main(wind_strength, desired_radius):
 
   # axes.plot(trajectory[:,0], trajectory[:,1], trajectory[:,2], 'x-',  alpha=0.5)
   # axes.scatter(trajectory[-1][0], trajectory[-1][1], trajectory[-1][2], label="END")
-  axes.plot(trajectory[:,0], trajectory[:,1], 'x-',  alpha=0.5)
+  axes.plot(trajectory[:,0], trajectory[:,1], '-',  alpha=0.5)
   axes.scatter(trajectory[-1][0], trajectory[-1][1], label="END")
   axes.scatter(env.target_pos[0], env.target_pos[1], s=80, marker="X",color="black", label="TARGET")
   axes.set_title(f"Wind strength = {wind_strength}, desired radius = {desired_radius}")
   # axes.scatter(env.target_pos[0], env.target_pos[1], env.target_pos[2], s=80, marker="X",color="black", label="TARGET")
   axes.legend()
 
+  circum_error_list = zoom(circum_error_list, 1.0/env.agent.control_frequency)
+  
   fig_err = plt.figure()
   axes_err = fig_err.add_subplot(111)
   axes_err.plot(range(len(circum_error_list)), circum_error_list)
@@ -47,14 +49,20 @@ def main(wind_strength, desired_radius):
   across_wind = zoom(across_wind, 1.0/env.agent.control_frequency)
   axes_wind.plot(range(len(along_wind)), along_wind, color="red", alpha=0.5, label="along wind estimation")
   axes_wind.plot(range(len(across_wind)), across_wind, color="blue", alpha=0.5, label="across wind estimation")
-  axes_wind.plot(range(len(env.wind_along)), env.wind_along, color="red", linestyle="--", alpha=0.3, label="true along wind")
-  axes_wind.plot(range(len(env.wind_cross)), env.wind_cross, color="blue", linestyle="--", alpha=0.3, label="true across wind")
+  axes_wind.plot(range(len(env.wind_along)), env.wind_along, color="red", linestyle="--", alpha=1, label="true along wind")
+  axes_wind.plot(range(len(env.wind_cross)), env.wind_cross, color="blue", linestyle="--", alpha=1, label="true across wind")
+  # axes_wind.plot(range(len(env.wind_along)), np.ones(len(env.wind_along)), color="red", linestyle="--", alpha=1, label="true along wind")
+  # axes_wind.plot(range(len(env.wind_cross)), -2*np.ones(len(env.wind_cross)), color="blue", linestyle="--", alpha=1, label="true across wind")
   axes_wind.legend()
   axes_wind.set_title("Estimated vs true wind")
-  axes.set_xlabel("Time (s)")
-  axes.set_ylabel("wind speed (m/s)")
+  axes_wind.set_xlabel("Time (s)")
+  axes_wind.set_ylabel("wind speed (m/s)")
+  
+  ## Plot the SOC graph
+  axes_battery = env.agent.SOC()
 
   plt.show()
+  
 
 if __name__ == "__main__":
-  main(wind_strength=35, desired_radius=6)
+  main(wind_strength=25, desired_radius=2)

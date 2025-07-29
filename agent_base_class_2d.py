@@ -1,6 +1,7 @@
 import numpy as np
 import math
-
+from battery import Battery
+import matplotlib.pyplot as plt
 
 class AgentBase_2D:
     def __init__(self, desired_radius, initial_agent_state=None,initial_agent_estimation=None):
@@ -20,10 +21,10 @@ class AgentBase_2D:
         self.estimated_state_trajectory = []
         self.estimated_state_trajectory.append(self.estimated_state)
 
-
+        self.battery_model = Battery()
 
         self.desired_radius = desired_radius
-        self.control_frequency = 100
+        self.control_frequency = 1000
 
         self.tagential_gain = 60
         self.distance_gain = 10
@@ -33,7 +34,10 @@ class AgentBase_2D:
         self.distance_error_list = []
         self.pose_estimation_error_list = []
         self.circumnavigation_error_list = []
-        self.wind_estimation = []
+
+        ## Initial wind estimation
+        self.wind_estimation_hist = []
+        self.wind_estimation = np.array([0.0,0.0])
 
     def act(self, *args, **kwargs):
         raise NotImplementedError("The act method must be implemented in the derived class.")
@@ -112,3 +116,13 @@ class AgentBase_2D:
             if all(error < 5 for error in last_ten_errors):
                 return True 
         return False  
+
+    def SOC(self):
+        SOC = np.array(self.battery_model.charge_history)
+        fig = plt.figure(figsize=(10,10))
+        axes = fig.add_subplot(111)
+        axes.plot(range(len(SOC)), SOC/3600)
+        axes.set_title("SOC of UAV over flight")
+        axes.set_ylabel("SOC (Wh)")
+        axes.set_xlabel("Time (ms)")
+        return axes

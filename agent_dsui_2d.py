@@ -47,7 +47,9 @@ class Agent_DSUI_2D(AgentBase_2D):
         #                 (self.tagential_gain - tangential_bearing.transpose() @ self.estimated_state[2:]) * tangential_bearing + 
         #                 self.estimated_state[2:])
         output_vector = (estimated_error)*bearing+(self.tagential_gain-tangential_bearing.transpose()@self.estimated_state[2:])*tangential_bearing+self.estimated_state[2:]
+        output_vector = np.clip(output_vector, -10, 10)
         # Apply control action
+        print(wind)
         self.position = self.position + output_vector / self.control_frequency  + wind / self.control_frequency
         
         self.trajectory.append(self.position)

@@ -8,7 +8,6 @@ from typing import Tuple, Dict, List, Any, Optional
 import numpy.typing as npt
 from dataclasses import dataclass
 import dryden_wind
-from agent_dsui import Agent_DSUI
 from agent_dsui_2d_wind_estimator import Agent_DSUI_wind_2D
 from agent_dsui_2d import Agent_DSUI_2D
 import math
@@ -122,22 +121,22 @@ class UAVEnv(gym.Env):
             action (np.ndarray): The action to take.
         """
         frequency = self.agent.control_frequency
-
-        ## Treat wind as linear interpolation between timesteps
+        # wind=np.array([1,-2])
+        # Treat wind as linear interpolation between timesteps
         if math.floor(self.step_count/frequency) < len(self.wind_along) - 1:
-            wind_t1 = self.wind_along[math.floor(self.step_count/frequency)]
-            wind_t2 = self.wind_along[math.floor(self.step_count/frequency) + 1]
-            wind = wind_t1 + self.step_count%frequency*(wind_t2-wind_t1)
+            wind_t1 = np.array([self.wind_along[math.floor(self.step_count/frequency)], self.wind_cross[math.floor(self.step_count/frequency)]])
+            wind_t2 = np.array([self.wind_along[math.floor(self.step_count/frequency)+1], self.wind_cross[math.floor(self.step_count/frequency)+1]])
+            wind = wind_t1 + (self.step_count%frequency)*(wind_t2-wind_t1)
         else:
             wind = np.array([0,0])
         self.agent.act(np.array([self.target_pos[0], self.target_pos[1]]), wind)
-        if frequency % 1000 == 0: 
+        if self.step_count % self.agent.control_frequency== 0: 
             self._update_wind()
         self.step_count += 1
         
 
     def agent_get_info(self):
-        return self.agent.trajectory, self.agent.circumnavigation_error_list, self.agent.wind_estimation
+        return self.agent.trajectory, self.agent.circumnavigation_error_list, self.agent.wind_estimation_hist
 
     def _get_obs(self) -> npt.NDArray[np.float32]:
         """Get current observation.
