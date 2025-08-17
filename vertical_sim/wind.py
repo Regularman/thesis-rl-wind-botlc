@@ -17,5 +17,8 @@ class Wind():
     else:
        wind = np.array([0,0])
     return wind
+  
+  def get_along(self):
+     return self.wind_along
     
     

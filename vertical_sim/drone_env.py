@@ -12,7 +12,7 @@ class DroneVertical(gym.Env):
   '''
   Observation is the agent's view of the environment and info is just information used for debugging
   '''
-  def __init__(self, render_sim, render_path, render_shade, size, n_steps, desired_distance, frequency, force_scale):
+  def __init__(self, render_sim, render_path, render_shade, size, n_steps, desired_distance, frequency, force_scale, wind_strength):
   
     self.render_sim = render_sim
     self.render_path = render_path
@@ -26,9 +26,23 @@ class DroneVertical(gym.Env):
     self.frequency = frequency
     self.drone_shade_distance = 70
     '''
-    Adjust turbulent wind strength here
+    ############
+    ## CHANGE ##
+    ############
+    This is the action for two rotors in the UAV
     '''
-    self.wind_strength = 0
+    # self.previous_action = [queue.Queue(), queue.Queue()]
+
+    # for i in range(6):
+    #   self.previous_action[0].put(0)
+    #   self.previous_action[1].put(0)
+    self.action_hist = [[], []]
+    '''
+    ############
+    ## CHANGE ##
+    ############
+    '''
+    self.wind_strength = wind_strength
     self.wind = Wind(wind_strength=self.wind_strength)
 
     ## Used for real time visualisation
@@ -56,6 +70,8 @@ class DroneVertical(gym.Env):
     '''
     action[0] = force in the x direction
     action[1] = force in the y direction
+
+    Note that positive thrust constraint has been applied
     '''
     min_action = np.array([-1, -1], dtype=np.float32)
     max_action = np.array([1, 1], dtype=np.float32)
@@ -122,19 +138,35 @@ class DroneVertical(gym.Env):
     dx = self._target_position[0] - self._agent_position[0]
     dy = self._target_position[1] - self._agent_position[1]
     distance = math.sqrt(dx**2+dy**2)
-    
-    if distance < self.desired_distance:
-      reward = 10 - distance / self.desired_distance
-    else:
-      reward = 1 - distance/self.size
-    if terminated:
-      reward += 100
+  
+    scale_factor = 5
+    b = math.sqrt((5*self.size -1)/scale_factor)
+    max_reward = scale_factor*math.sqrt((5*self.size-1)/scale_factor)
+    reward = (scale_factor*self.size/(distance+self.size/b))
 
-    if truncated: 
-      reward -= 10
+    '''This is negative reward function when the agent flys out of bounds or becomes vertical leading it to drop out of the air'''
+    if truncated:
+      reward -= 1
 
-    # if abs(obs["pitch"][0] * np.pi/2) > np.pi/3:
-    #    reward =-2
+    '''Thrust stabilisation condition'''
+    # if terminated or truncated:
+    #   max_noise = self.current_time_step
+    #   prev_action = 0
+    #   action_noise_left = 0
+    #   action_noise_right = 0
+    #   for action in self.action_hist[0]:
+    #     action = action/2+0.5
+    #     action_noise_left += abs(action-prev_action)
+    #     prev_action = action
+
+    #   prev_action = 0
+    #   for action in self.action_hist[1]:
+    #     action = action/2+0.5
+    #     action_noise_right += abs(action-prev_action)
+    #     prev_action = action
+      
+    #   fluctation_reward = (action_noise_left/max_noise) + (action_noise_right/max_noise)
+    #   reward -= fluctation_reward*max_reward
 
     return reward
     
@@ -142,6 +174,7 @@ class DroneVertical(gym.Env):
     if self.first_step is True:
         if self.render_sim is True and self.render_path is True: self.add_postion_to_drop_path()
         if self.render_sim is True and self.render_shade is True: self.add_drone_shade()
+
     #Saving drone's position for drawing
     if self.first_step is True:
         if self.render_sim is True and self.render_path is True: self.add_postion_to_drop_path()
@@ -163,48 +196,53 @@ class DroneVertical(gym.Env):
     dy = self._target_position[1] - self._agent_position[1]
     distance = math.sqrt(dx**2+dy**2)
   
-    if math.isclose(distance, 0):
+    if self.current_time_step >= self.maximum_steps:
       terminated = True
 
     ## Updating drone position
     '''
-    Remember that action is bounded between -1 and 1. The transformation given moves it to 
+    Remember that action is bounded between 0 and 1. The transformation given moves it to 
     a scale between 0 and 1
     '''
-    self.left_force = (action[0]/2 + 0.5) * self.force_scale
-    self.right_force = (action[1]/2 + 0.5) * self.force_scale
+    self.left_force = (action[0]/2+0.5) * self.force_scale
+    self.right_force = (action[1]/2+0.5)* self.force_scale
     self.drone.frame_shape.body.apply_force_at_local_point(Vec2d(0, self.left_force), (-self.drone_radius, 0))
     self.drone.frame_shape.body.apply_force_at_local_point(Vec2d(0, self.right_force), (self.drone_radius, 0))
-
 
     '''
     Updates wind if it is implemented. 
     '''
     wind= self.wind.get_wind(self.current_time_step, self.frequency)
-    self.drone.frame_shape.body.velocity += Vec2d(wind[0]/self.frequency, wind[1]/self.frequency)           # Boost sepeed according to the wind
+    self.drone.frame_shape.body.velocity += Vec2d(wind[0], wind[1])           # Boost speed according to the wind
 
     self.space.step(1.0/self.frequency)
     self.current_time_step += 1
 
+
     self._agent_position = np.array(self.drone.frame_shape.body.position)
     obs = self.get_obs()
 
-    if self.current_time_step >= self.maximum_steps:
-      truncated = True
-    elif self._agent_position[0] < 0 or self._agent_position[0] >= self.size:
-      truncated = True
-    elif self._agent_position[1] < 0 or self._agent_position[1] >= self.size:
-      truncated = True
+    if self._agent_position[0] < 0 or self._agent_position[0] > self.size or self._agent_position[1] < 0 or self._agent_position[1] > self.size:
+      truncated = True  
     elif obs["pitch"][0] == 1 or obs["pitch"][0] == -1:
       truncated = True
-    
     reward = self.get_reward(truncated, terminated, obs, action)
+
+    ''' 
+    Append to the action history 
+    '''
+    # self.previous_action[0].put(action[0]/2+0.5)
+    # self.previous_action[1].put(action[1]/2+0.5)
+    # self.previous_action[0].get()
+    # self.previous_action[1].get()
+    # self.previous_action = np.array([action[0]/2+0.5, action[1]/2+0.5])
+    self.action_hist[0].append(action[0]/2+0.5)
+    self.action_hist[1].append(action[1]/2+0.5)
 
     return obs, reward, terminated, truncated, self.get_info()
   
-  def render(self, mode='human', close=False):
+  def render(self, mode="human"):
     if self.render_sim is False: return
-
     pygame_events(self.space, self, change_target=False)
     self.screen.fill((243, 243, 243))
     pygame.draw.rect(self.screen, (24, 114, 139), pygame.Rect(0, 0, self.size, self.size), 1)
@@ -243,11 +281,19 @@ class DroneVertical(gym.Env):
     if len(self.drop_path) > 2:
         pygame.draw.aalines(self.screen, (255, 0, 0), False, self.drop_path)
 
-    pygame.display.flip()
-    self.clock.tick(60)
+    # Return RGB array if in rgb_array mode
+    if mode == "rgb_array":
+        frame = pygame.surfarray.array3d(self.screen)  # (W, H, 3)
+        frame = np.transpose(frame, (1, 0, 2))        # Convert to (H, W, 3)
+        return frame
+    else:     
+      pygame.display.flip()
+      self.clock.tick(60)
         
   def get_info(self):
-    return {"target_position": self._target_position}
+    return {"target_position": self._target_position,
+            "current_time_step": self.current_time_step,
+            "max_timestep": self.maximum_steps}
 
   def reset(self, *, seed=None, options=None):
     # IMPORTANT: Must call this first to seed the random number generator
@@ -255,15 +301,17 @@ class DroneVertical(gym.Env):
     self.trajectory = []
     self.reward_hist = []
     self.current_time_step = 0
+    self.action_hist = [[], []]
     self.init_pymunk()
     
     self.wind = Wind(wind_strength=self.wind_strength)
+    margin = 1000
+    self._target_position = self.np_random.integers(margin, self.size-margin, size=2, dtype=int)
 
-    self._target_position = self.np_random.integers(0, self.size, size=2, dtype=int)
     # Randomly place target, ensuring it's different from agent position
     while np.array_equal(self._target_position, self._agent_position):
         self._target_position = self.np_random.integers(
-            0, self.size, size=2, dtype=int
+            margin, self.size-margin, size=2, dtype=int
         )
     observation = self.get_obs()
     info = self.info
@@ -299,7 +347,7 @@ class DroneVertical(gym.Env):
     #Generating drone's starting position
     random_x = random.uniform(0, self.size)
     random_y = random.uniform(0, self.size)
-    angle_rand = random.uniform(-np.pi/4, np.pi/4)
+    angle_rand = random.uniform(0, 0)
 
     # Randomly place the agent anywhere on the grid
     self._agent_position = np.array([random_x, random_y], dtype=np.float32)
