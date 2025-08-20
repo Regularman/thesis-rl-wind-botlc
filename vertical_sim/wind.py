@@ -5,6 +5,7 @@ import math
 class Wind():
   def __init__(self, wind_strength):
     wind_along, wind_cross, wind_vertical = dryden_wind.dryden_wind_velocities(height=10, airspeed=5)
+    ## Wind strength multiplier
     self.wind_along = np.multiply(np.array(wind_along), wind_strength)
     self.wind_cross = np.multiply(np.array(wind_cross), wind_strength)
     self.wind_vertical = np.multiply(np.array(wind_vertical), wind_strength)

@@ -7,12 +7,13 @@ from gym_drone_model import *
 import os
 from event_handler import *
 from wind import *
+from wind_estimator import *
 
 class DroneVertical(gym.Env):
   '''
   Observation is the agent's view of the environment and info is just information used for debugging
   '''
-  def __init__(self, render_sim, render_path, render_shade, size, n_steps, desired_distance, frequency, force_scale, wind_strength):
+  def __init__(self, render_sim, render_path, render_shade, size, n_steps, desired_distance, frequency, force_scale):
   
     self.render_sim = render_sim
     self.render_path = render_path
@@ -25,25 +26,13 @@ class DroneVertical(gym.Env):
     self.force_scale = force_scale
     self.frequency = frequency
     self.drone_shade_distance = 70
-    '''
-    ############
-    ## CHANGE ##
-    ############
-    This is the action for two rotors in the UAV
-    '''
-    # self.previous_action = [queue.Queue(), queue.Queue()]
 
-    # for i in range(6):
-    #   self.previous_action[0].put(0)
-    #   self.previous_action[1].put(0)
-    self.action_hist = [[], []]
     '''
-    ############
-    ## CHANGE ##
-    ############
+    Set the uniform distribution range, from 0 to x.
     '''
-    self.wind_strength = wind_strength
-    self.wind = Wind(wind_strength=self.wind_strength)
+    self.target_speed = np.random.uniform(0,0,size=1).astype(np.float32)
+  
+    self.wind_strength = 0
 
     ## Used for real time visualisation
     if self.render_sim is True:
@@ -60,11 +49,13 @@ class DroneVertical(gym.Env):
     self.right_force = -1
     self.trajectory = []
     self.reward_hist = []
+    self.target_trajectory = []
     self.first_step = True
+    self.wind_window = [[], []] 
 
     ## Empirical parameters for velocity normalisation
-    self.v_norm = 1330
-    self.w_norm = 11.7
+    self.v_norm = 600
+    self.w_norm = 3
 
     ## Defining spaces for action and observation
     '''
@@ -82,9 +73,9 @@ class DroneVertical(gym.Env):
             "v": gym.spaces.Box(-1,1, shape=(2,), dtype=np.float32),           # Linear velocity
             "omega": gym.spaces.Box(-1,1, shape=(1,), dtype=np.float32),       # Angular velocity
             "pitch": gym.spaces.Box(-1,1, shape=(1,), dtype=np.float32),       # Pitch
-            "dx": gym.spaces.Box(-1,1, shape=(1,), dtype=np.float32),          # Bearing to the target
-            "dy": gym.spaces.Box(-1,1, shape=(1,), dtype=np.float32),
-            "position": gym.spaces.Box(-1,1, shape=(2,), dtype=np.float32)
+            "distance": gym.spaces.Box(0,1, shape=(1,), dtype=np.float32),  
+            "bearing": gym.spaces.Box(-1,1, shape=(1,), dtype=np.float32),          
+            "wind_estimation": gym.spaces.Box(-1,1,shape=(2,), dtype=np.float32)
         }
     )
 
@@ -106,6 +97,15 @@ class DroneVertical(gym.Env):
       self.shade_image = pygame.image.load(img_path)
   
   def get_obs(self):
+    lstm_model, WINDOW_SIZE = load_wind_estimator()
+    wind_along = 0 
+    wind_vertical = 0
+    # if self.current_time_step >= WINDOW_SIZE: 
+    #   along_window = lstm_model(torch.from_numpy(np.array(self.wind_window[0])[-100:]).unsqueeze(1).unsqueeze(1).transpose(0,1))
+    #   vertical_window = lstm_model(torch.from_numpy(np.array(self.wind_window[1])[-100:]).unsqueeze(1).unsqueeze(1).transpose(0,1))
+    #   wind_along, _ = lstm_model(along_window)
+    #   wind_vertical, _ = lstm_model(vertical_window)
+
     velocity_x, velocity_y = self.drone.frame_shape.body.velocity_at_local_point((0, 0))
 
     velocity_x = np.clip(velocity_x/self.v_norm, -1, 1)
@@ -121,52 +121,29 @@ class DroneVertical(gym.Env):
     dy = self._target_position[1] - self._agent_position[1]
     bearing = math.atan2(dy, dx) / math.pi
 
-    # return np.array([velocity_x, velocity_y, omega, alpha, bearing, self._agent_position[0], self._agent_position[1]])
-    x = self._agent_position[0]/self.size
-    y = self._agent_position[1]/self.size
-
-    distance = math.sqrt(dx**2+dy**2) / self.size
+    distance = math.sqrt(dx**2+dy**2) /(math.sqrt(2)*self.size)
+    ### Epsilon term to prevent division by 0
+    eps = 0.00001
 
     return {"v": np.array([velocity_x, velocity_y], dtype=np.float32), 
             "omega": np.array([omega], dtype=np.float32),
             "pitch": np.array([alpha], dtype=np.float32), 
-            "dx": np.array([dx/self.size], dtype=np.float32), 
-            "dy": np.array([dy/self.size], dtype=np.float32),
-            "position": np.array([x,y], dtype=np.float32)}
+            "distance": np.array([distance], dtype=np.float32), 
+            "bearing": np.array([bearing], dtype=np.float32),
+            "wind_estimation": np.array([wind_along/(self.wind_strength + eps),wind_vertical/(self.wind_strength + eps)], dtype=np.float32)}    
   
   def get_reward(self, truncated, terminated, obs, action):
     dx = self._target_position[0] - self._agent_position[0]
     dy = self._target_position[1] - self._agent_position[1]
+
     distance = math.sqrt(dx**2+dy**2)
-  
-    scale_factor = 5
-    b = math.sqrt((5*self.size -1)/scale_factor)
-    max_reward = scale_factor*math.sqrt((5*self.size-1)/scale_factor)
-    reward = (scale_factor*self.size/(distance+self.size/b))
+    reward = (-distance+math.sqrt(2)*self.size)/(math.sqrt(2)*self.size)
+    if distance < self.desired_distance:
+       reward += 20*(-distance+self.desired_distance)/self.desired_distance
 
     '''This is negative reward function when the agent flys out of bounds or becomes vertical leading it to drop out of the air'''
     if truncated:
-      reward -= 1
-
-    '''Thrust stabilisation condition'''
-    # if terminated or truncated:
-    #   max_noise = self.current_time_step
-    #   prev_action = 0
-    #   action_noise_left = 0
-    #   action_noise_right = 0
-    #   for action in self.action_hist[0]:
-    #     action = action/2+0.5
-    #     action_noise_left += abs(action-prev_action)
-    #     prev_action = action
-
-    #   prev_action = 0
-    #   for action in self.action_hist[1]:
-    #     action = action/2+0.5
-    #     action_noise_right += abs(action-prev_action)
-    #     prev_action = action
-      
-    #   fluctation_reward = (action_noise_left/max_noise) + (action_noise_right/max_noise)
-    #   reward -= fluctation_reward*max_reward
+      reward -= 5
 
     return reward
     
@@ -215,29 +192,26 @@ class DroneVertical(gym.Env):
     wind= self.wind.get_wind(self.current_time_step, self.frequency)
     self.drone.frame_shape.body.velocity += Vec2d(wind[0], wind[1])           # Boost speed according to the wind
 
+    ## Updates the wind window
+    self.wind_window[0].append(wind[0])
+    self.wind_window[1].append(wind[1])
+
     self.space.step(1.0/self.frequency)
     self.current_time_step += 1
 
+    """Update the target position"""
+    self._target_position += self._target_velocity
+    self.target_trajectory.append(self._target_position)
 
     self._agent_position = np.array(self.drone.frame_shape.body.position)
     obs = self.get_obs()
 
+    ## If out of bounds or the pitch becomes vertical
     if self._agent_position[0] < 0 or self._agent_position[0] > self.size or self._agent_position[1] < 0 or self._agent_position[1] > self.size:
       truncated = True  
-    elif obs["pitch"][0] == 1 or obs["pitch"][0] == -1:
+    elif self.get_info()["pitch"] == 1 or self.get_info()["pitch"] == -1:
       truncated = True
     reward = self.get_reward(truncated, terminated, obs, action)
-
-    ''' 
-    Append to the action history 
-    '''
-    # self.previous_action[0].put(action[0]/2+0.5)
-    # self.previous_action[1].put(action[1]/2+0.5)
-    # self.previous_action[0].get()
-    # self.previous_action[1].get()
-    # self.previous_action = np.array([action[0]/2+0.5, action[1]/2+0.5])
-    self.action_hist[0].append(action[0]/2+0.5)
-    self.action_hist[1].append(action[1]/2+0.5)
 
     return obs, reward, terminated, truncated, self.get_info()
   
@@ -291,31 +265,58 @@ class DroneVertical(gym.Env):
       self.clock.tick(60)
         
   def get_info(self):
+    velocity_x, velocity_y = self.drone.frame_shape.body.velocity_at_local_point((0, 0))
+    velocity = math.sqrt(velocity_x**2 + velocity_y**2)
+    omega = self.drone.frame_shape.body.angular_velocity
+
+    alpha = self.drone.frame_shape.body.angle
+    alpha = np.clip(alpha/(np.pi/2), -1, 1)
     return {"target_position": self._target_position,
             "current_time_step": self.current_time_step,
-            "max_timestep": self.maximum_steps}
+            "max_timestep": self.maximum_steps,
+            "position": np.array([self._agent_position[0], self._agent_position[1]]), 
+            "angular_velocity": omega,
+            "velocity": velocity, 
+            "pitch": alpha}
 
   def reset(self, *, seed=None, options=None):
     # IMPORTANT: Must call this first to seed the random number generator
     super().reset(seed=seed)
     self.trajectory = []
     self.reward_hist = []
+    self.target_trajectory = []
     self.current_time_step = 0
-    self.action_hist = [[], []]
+    self.wind_window = [[], []]
+
+    wind_strength = np.random.uniform(0,self.wind_strength,size=1).astype(np.float32)
+    self.wind = Wind(wind_strength=wind_strength)
+  
     self.init_pymunk()
     
     self.wind = Wind(wind_strength=self.wind_strength)
-    margin = 1000
-    self._target_position = self.np_random.integers(margin, self.size-margin, size=2, dtype=int)
-
+    margin = 300
+    self._target_position = np.random.uniform(margin, self.size-margin, size=2).astype(np.float32)
+  
     # Randomly place target, ensuring it's different from agent position
     while np.array_equal(self._target_position, self._agent_position):
         self._target_position = self.np_random.integers(
             margin, self.size-margin, size=2, dtype=int
         )
+  
+    """Find the furthest corner and the target will move towards it at various rates"""
+    corners = [(0,0), (0,self.size), (self.size, 0), (self.size, self.size)]
+    self._target_velocity = np.array([0.0,0.0], dtype=np.float32)
+    max_distance = 0
+    speed = np.random.uniform(0,self.target_speed,size=1).astype(np.float32)
+    for corner in corners:
+      distance = (corner[0]-self._target_position[0])**2+(corner[1]-self._target_position[1])**2
+      if distance > max_distance:
+        max_distance = distance
+        ## Calculates the unit vector towards the destination
+        self._target_velocity = (corner-self._target_position)/math.sqrt(distance)*speed
+
     observation = self.get_obs()
     info = self.info
-
     return observation, info
   
   def add_postion_to_drop_path(self):

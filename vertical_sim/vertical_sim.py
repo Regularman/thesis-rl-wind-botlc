@@ -11,18 +11,18 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from scipy.stats import gaussian_kde
+import math
 
 register(
     id="drone-2d-custom-v0",
     entry_point="drone_env:DroneVertical",
 )
 
-size = 3000
+size = 800
 frequency = 60.0
-wind_strength = 0
-desired_distance = 50
+desired_distance = 30
 n_steps = 600
-total_timesteps = 100000
+total_timesteps = 250000
 
 def step_decay_lr(progress_remaining):
     """
@@ -31,10 +31,10 @@ def step_decay_lr(progress_remaining):
     """
     # Convert progress_remaining to current timestep
     current_step = int((1 - progress_remaining) * total_timesteps)
-    initial_lr = 0.001
-    decay_steps = 50000
+    initial_lr = 0.005
+    decay_steps = 10000
     n = current_step // decay_steps
-    return initial_lr * (0.5** n)
+    return initial_lr * (0.95** n)
 
 def train():
   env = Monitor(gym.make('drone-2d-custom-v0', 
@@ -45,13 +45,12 @@ def train():
                          n_steps=n_steps, 
                          desired_distance=desired_distance,
                          frequency = frequency, 
-                         force_scale=1000,
-                         wind_strength=wind_strength), filename="./logs/monitor.csv")
+                         force_scale=1000), filename="./logs/monitor.csv")
   
-  model = SAC("MultiInputPolicy", env, verbose=1, action_noise=NormalActionNoise(mean=np.array([0,0]), sigma=np.array([0.1,0.1]), dtype=np.float32), batch_size=128, learning_rate=step_decay_lr)
+  model = SAC("MultiInputPolicy", env, verbose=1, action_noise=NormalActionNoise(mean=np.array([0,0]), sigma=np.array([0.25,0.25])), learning_rate=step_decay_lr)
 
   ## Note that the frequency is 60
-  model.learn(total_timesteps=100000)
+  model.learn(total_timesteps=total_timesteps)
   model.save('new_agent')
   
 def reward_graph():
@@ -72,11 +71,10 @@ def eval(render):
                  render_path=render,
                  render_shade=False,
                  size=size, 
-                 n_steps=600, 
+                 n_steps=2000, 
                  desired_distance=desired_distance,
                  frequency = frequency,
-                 force_scale=1000,
-                 wind_strength=wind_strength)
+                 force_scale=1000)
 
   model = SAC.load("new_agent.zip", verbose=0)
 
@@ -88,27 +86,44 @@ def eval(render):
 
   obs, info = env.reset()
   trajectory = []
+  target_trajectory = []
   reward_hist = []
   thrust_left = []
   thrust_right = []
   error = []
+  velocity = []
+  omega = []
+  bearing = []
   out_of_bounds = False
   failed = False
 
   try:
     while True:
       
+      # model, WINDOW_SIZE = load_wind_estimator()
+      # if info["current_time_step"] >= WINDOW_SIZE:
+      #   pass
       action, _states = model.predict(obs)
       '''
       Record action to look at thrust demand over the flight time 
       '''
       thrust_left.append(action[0]/2+0.5)
       thrust_right.append(action[1]/2+0.5)
+
       obs, reward, terminated, truncated, info = env.step(action)
-      trajectory.append(obs["position"]*size)
+
+      """
+      Load trajectory information to be graphed
+      """
+      trajectory.append(info["position"])
+      target_trajectory.append(np.array(info["target_position"], copy=True))
       reward_hist.append(reward)
-      error.append(np.linalg.norm(info["target_position"]-obs["position"]*size))
+      omega.append(info["angular_velocity"])
+      velocity.append(math.sqrt(obs["v"][0]**2+obs["v"][1]**2))
+      bearing.append(obs["bearing"][0])
+      error.append(np.linalg.norm(info["target_position"]-info["position"]))
       env.render()
+
       if terminated or truncated:
         break
 
@@ -122,7 +137,8 @@ def eval(render):
       axes = figure.add_subplot(111)
       axes.plot(np.array(trajectory)[:,0], np.array(trajectory)[:,1], '-',  alpha=0.5)
       axes.scatter(trajectory[-1][0], trajectory[-1][1], label="END")
-      axes.scatter(info["target_position"][0], info["target_position"][1], s=80, marker="X",color="black", label="TARGET")
+      axes.plot(np.array(target_trajectory)[:, 0], np.array(target_trajectory)[:,1], '-' , color="red", alpha=0.5)
+      axes.scatter(info["target_position"][0], info["target_position"][1], s=20, marker="X",color="black", label="TARGET END")
       axes.set_title(f"{label}")
 
       figure_thrust = plt.figure()
@@ -138,9 +154,25 @@ def eval(render):
       axes_err = figure_error.add_subplot(111)
       axes_err.plot(range(len(error)), error)
       axes_err.set_title("Distance error of UAV from target over the flight duration")
+
+      figure_omega = plt.figure()
+      axes_omega = figure_omega.add_subplot(111)
+      axes_omega.plot(range(len(omega)), omega)
+      axes_omega.set_title("Angular Velocity")
+
+      figure_v = plt.figure()
+      axes_v = figure_v.add_subplot(111)
+      axes_v.plot(range(len(velocity)), velocity)
+      axes_v.set_title("Velocity")
+
+      figure_bearing = plt.figure()
+      axes_bearing = figure_bearing.add_subplot(111)
+      axes_bearing.plot(range(len(bearing)), bearing)
+      axes_bearing.set_title("bearing observations")
+
       plt.show()
-  
-    if obs["position"][0] < 0 or obs["position"][0] >= size or obs["position"][1] < 0 or obs["position"][1] >= size: 
+
+    if info["position"][0] < 0 or info["position"][0] >= size or info["position"][1] < 0 or info["position"][1] >= size: 
       out_of_bounds = True
     elif abs(obs["pitch"][0]) ==1:
       failed = True
@@ -181,8 +213,8 @@ def calc_average_error():
   # 4. Display the plot
   plt.show()
 if __name__ == "__main__":
-  # train()
-  # reward_graph()
+  train()
+  reward_graph()
   # calc_average_error()
   eval(render=True)
 
