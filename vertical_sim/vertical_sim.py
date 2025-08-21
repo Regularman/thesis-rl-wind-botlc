@@ -22,7 +22,7 @@ size = 800
 frequency = 60.0
 desired_distance = 30
 n_steps = 600
-total_timesteps = 250000
+total_timesteps = 100000
 
 def step_decay_lr(progress_remaining):
     """
@@ -71,7 +71,7 @@ def eval(render):
                  render_path=render,
                  render_shade=False,
                  size=size, 
-                 n_steps=2000, 
+                 n_steps=n_steps, 
                  desired_distance=desired_distance,
                  frequency = frequency,
                  force_scale=1000)
@@ -213,8 +213,8 @@ def calc_average_error():
   # 4. Display the plot
   plt.show()
 if __name__ == "__main__":
-  train()
-  reward_graph()
+  # train()
+  # reward_graph()
   # calc_average_error()
   eval(render=True)
 

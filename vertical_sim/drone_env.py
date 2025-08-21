@@ -30,7 +30,7 @@ class DroneVertical(gym.Env):
     '''
     Set the uniform distribution range, from 0 to x.
     '''
-    self.target_speed = np.random.uniform(0,0,size=1).astype(np.float32)
+    self.target_speed = np.random.uniform(0,0.5,size=1).astype(np.float32)
   
     self.wind_strength = 0
 

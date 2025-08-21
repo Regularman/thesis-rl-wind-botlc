@@ -124,5 +124,5 @@ def load_wind_estimator():
   model.load_state_dict(torch.load('./wind_estimator.mdl'))
   return model, WINDOW_SIZE
 if __name__ == "__main__":
-  #  train()
+   train()
    eval()
