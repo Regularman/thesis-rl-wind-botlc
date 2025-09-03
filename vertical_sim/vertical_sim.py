@@ -13,15 +13,17 @@ from tqdm import tqdm
 from scipy.stats import gaussian_kde
 import math
 
-register(
-    id="drone-2d-custom-v0",
-    entry_point="drone_env:DroneVertical",
-)
+env_id = "drone-2d-custom-v0"
+if env_id not in gym.registry:
+  register(
+      id=env_id,
+      entry_point="drone_env:DroneVertical",
+  )
 
 size = 800
 frequency = 60.0
 desired_distance = 30
-n_steps = 600
+n_steps = 6000
 total_timesteps = 100000
 
 def step_decay_lr(progress_remaining):
@@ -91,9 +93,13 @@ def eval(render):
   thrust_left = []
   thrust_right = []
   error = []
-  velocity = []
+  v_x = []
+  v_y = []
   omega = []
   bearing = []
+  wind = []
+  pitch = []
+
   out_of_bounds = False
   failed = False
 
@@ -119,9 +125,13 @@ def eval(render):
       target_trajectory.append(np.array(info["target_position"], copy=True))
       reward_hist.append(reward)
       omega.append(info["angular_velocity"])
-      velocity.append(math.sqrt(obs["v"][0]**2+obs["v"][1]**2))
+      v_x.append(obs["v"][0])
+      v_y.append(obs["v"][1])
       bearing.append(obs["bearing"][0])
       error.append(np.linalg.norm(info["target_position"]-info["position"]))
+      wind.append(info["wind"].get_wind(info["current_time_step"], frequency))
+      pitch.append(obs["pitch"][0])
+
       env.render()
 
       if terminated or truncated:
@@ -162,7 +172,7 @@ def eval(render):
 
       figure_v = plt.figure()
       axes_v = figure_v.add_subplot(111)
-      axes_v.plot(range(len(velocity)), velocity)
+      axes_v.plot(range(len(v_x)), np.sqrt(np.array(v_x)**2+np.array(v_y)**2))
       axes_v.set_title("Velocity")
 
       figure_bearing = plt.figure()
@@ -178,7 +188,7 @@ def eval(render):
       failed = True
 
     env.close()
-    return error[-1], failed, out_of_bounds
+    return np.array(error)/size, failed, out_of_bounds, np.array(wind), np.array(bearing), np.array(v_x), np.array(v_y), np.array(omega), np.array(pitch), np.array(thrust_left), np.array(thrust_right)
 
 def calc_average_error():
   iterations = 1000
@@ -187,13 +197,13 @@ def calc_average_error():
   out_of_bound_count = 0
 
   for it in tqdm(range(iterations)):
-    final_err, failed, out_of_bounds = eval(render=False)
+    final_err, failed, out_of_bounds, wind, bearing, velocity, omega, pitch= eval(render=False)
     if failed:
       failed_count += 1
     elif out_of_bounds:
       out_of_bound_count += 1
     else: 
-      error.append(final_err)
+      error.append(final_err[-1])
   average = np.mean(np.array(error))
   print(f"The average steady state error is {average}mm for non truncated case")  
   print(f"The episodes truncates {failed_count+out_of_bound_count} out of {iterations} time. {out_of_bound_count} went out of bounds and {failed_count} went 90 degrees")  

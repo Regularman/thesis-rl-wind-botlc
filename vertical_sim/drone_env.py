@@ -32,7 +32,7 @@ class DroneVertical(gym.Env):
     '''
     self.target_speed = np.random.uniform(0,0.5,size=1).astype(np.float32)
   
-    self.wind_strength = 0
+    self.wind_strength = 25
 
     ## Used for real time visualisation
     if self.render_sim is True:
@@ -52,6 +52,7 @@ class DroneVertical(gym.Env):
     self.target_trajectory = []
     self.first_step = True
     self.wind_window = [[], []] 
+    self.prev_action = np.array([0,0])
 
     ## Empirical parameters for velocity normalisation
     self.v_norm = 600
@@ -97,7 +98,7 @@ class DroneVertical(gym.Env):
       self.shade_image = pygame.image.load(img_path)
   
   def get_obs(self):
-    lstm_model, WINDOW_SIZE = load_wind_estimator()
+    # lstm_model, WINDOW_SIZE = load_wind_estimator()
     wind_along = 0 
     wind_vertical = 0
     # if self.current_time_step >= WINDOW_SIZE: 
@@ -122,15 +123,16 @@ class DroneVertical(gym.Env):
     bearing = math.atan2(dy, dx) / math.pi
 
     distance = math.sqrt(dx**2+dy**2) /(math.sqrt(2)*self.size)
-    ### Epsilon term to prevent division by 0
-    eps = 0.00001
 
     return {"v": np.array([velocity_x, velocity_y], dtype=np.float32), 
             "omega": np.array([omega], dtype=np.float32),
             "pitch": np.array([alpha], dtype=np.float32), 
             "distance": np.array([distance], dtype=np.float32), 
             "bearing": np.array([bearing], dtype=np.float32),
-            "wind_estimation": np.array([wind_along/(self.wind_strength + eps),wind_vertical/(self.wind_strength + eps)], dtype=np.float32)}    
+            ##########
+            # CHANGE #
+            ##########
+            "wind_estimation": np.array([wind_along, wind_vertical], dtype=np.float32)}    
   
   def get_reward(self, truncated, terminated, obs, action):
     dx = self._target_position[0] - self._agent_position[0]
@@ -138,8 +140,21 @@ class DroneVertical(gym.Env):
 
     distance = math.sqrt(dx**2+dy**2)
     reward = (-distance+math.sqrt(2)*self.size)/(math.sqrt(2)*self.size)
+
+    action_left_delta = abs(self.prev_action[0] - (action[0]/2+0.5))
+    action_right_delta = abs(self.prev_action[1] - (action[1]/2+0.5))
+    if action_left_delta > 0.05:
+      reward -= 0.5
+    if action_right_delta > 0.05:
+       reward -= 0.5
+
     if distance < self.desired_distance:
-       reward += 20*(-distance+self.desired_distance)/self.desired_distance
+      reward += 20*(-distance+self.desired_distance)/self.desired_distance
+      if action_left_delta > 0.05:
+        reward -= 10
+      if action_right_delta > 0.05:
+        reward -= 10
+    
 
     '''This is negative reward function when the agent flys out of bounds or becomes vertical leading it to drop out of the air'''
     if truncated:
@@ -190,7 +205,11 @@ class DroneVertical(gym.Env):
     Updates wind if it is implemented. 
     '''
     wind= self.wind.get_wind(self.current_time_step, self.frequency)
-    self.drone.frame_shape.body.velocity += Vec2d(wind[0], wind[1])           # Boost speed according to the wind
+    ##########
+    # CHANGE #
+    ##########
+    ## Wind vertical is currently set to 0
+    self.drone.frame_shape.body.velocity += Vec2d(wind[0], 0)           # Boost speed according to the wind
 
     ## Updates the wind window
     self.wind_window[0].append(wind[0])
@@ -211,7 +230,12 @@ class DroneVertical(gym.Env):
       truncated = True  
     elif self.get_info()["pitch"] == 1 or self.get_info()["pitch"] == -1:
       truncated = True
+    
     reward = self.get_reward(truncated, terminated, obs, action)
+
+    ## Updating the previous force
+    self.prev_action[0] = self.left_force
+    self.prev_action[1] = self.right_force
 
     return obs, reward, terminated, truncated, self.get_info()
   
@@ -258,7 +282,7 @@ class DroneVertical(gym.Env):
     # Return RGB array if in rgb_array mode
     if mode == "rgb_array":
         frame = pygame.surfarray.array3d(self.screen)  # (W, H, 3)
-        frame = np.transpose(frame, (1, 0, 2))        # Convert to (H, W, 3)
+        frame = np.transpose(frame, (1, 0, 2))         # Convert to (H, W, 3)
         return frame
     else:     
       pygame.display.flip()
@@ -277,7 +301,8 @@ class DroneVertical(gym.Env):
             "position": np.array([self._agent_position[0], self._agent_position[1]]), 
             "angular_velocity": omega,
             "velocity": velocity, 
-            "pitch": alpha}
+            "pitch": alpha,
+            "wind": self.wind}
 
   def reset(self, *, seed=None, options=None):
     # IMPORTANT: Must call this first to seed the random number generator
@@ -294,6 +319,7 @@ class DroneVertical(gym.Env):
     self.init_pymunk()
     
     self.wind = Wind(wind_strength=self.wind_strength)
+    
     margin = 300
     self._target_position = np.random.uniform(margin, self.size-margin, size=2).astype(np.float32)
   
@@ -316,7 +342,7 @@ class DroneVertical(gym.Env):
         self._target_velocity = (corner-self._target_position)/math.sqrt(distance)*speed
 
     observation = self.get_obs()
-    info = self.info
+    info = self.get_info()
     return observation, info
   
   def add_postion_to_drop_path(self):

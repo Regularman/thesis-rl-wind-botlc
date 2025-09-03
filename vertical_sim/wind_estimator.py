@@ -9,6 +9,17 @@ import statistics
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import TensorDataset, DataLoader
+from vertical_sim import eval
+
+'''
+Hyperparameter settings
+'''
+WINDOW_SIZE = 100
+INPUT_SIZE = 8
+HIDDEN_DIM = 10
+LR = 0.05
+EPOCH = 100
+BATCH_SIZE = 1
 
 class LSTM_wind_estimator(nn.Module):
   def __init__(self, hidden_dim, input_size):
@@ -24,33 +35,41 @@ class LSTM_wind_estimator(nn.Module):
       return velocity_space
     
 def prepare_wind(batch):
-    wind_strength = np.random.uniform(1,1, size=1).astype(np.float32)
-    wind = Wind(wind_strength=wind_strength)
-    wind_along = wind.get_along()
-    training_data = []
-    target = []
-    for i in range(len(wind_along)-WINDOW_SIZE):
-      interval_start = i 
-      interval_end = i + WINDOW_SIZE
-      training_data.append(torch.tensor(wind_along[interval_start:interval_end], dtype=torch.float32).unsqueeze(-1))
-      target.append(wind_along[i + WINDOW_SIZE])
     '''
-    Batching the data
+    Obtain the wind and action data 
     '''
-    if batch:
-      training_data = torch.stack(training_data, dim=0)
-      target = torch.tensor(target, dtype=torch.float32).unsqueeze(1)
+    error, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False)
+    wind_along = wind[:, 0]
+    wind_along_target = wind_along[WINDOW_SIZE:]
+
+    ## Wind vertical is currently set to be 0
+    wind_vertical = wind[:, 1]
+    wind_vertical_target = wind_vertical[WINDOW_SIZE:]
+
+    target = torch.tensor(wind_along_target)
+    # target = torch.stack([torch.tensor(wind_along_target, dtype=torch.float32), 
+    #                       torch.tensor(wind_vertical_target, dtype=torch.float32)], dim=-1)
+
+    '''
+    Inputs to the LSTM. Normalised.
+    '''
+    windows = []
+    training_data = torch.stack([torch.tensor(error, dtype=torch.float32), 
+                                 torch.tensor(bearing, dtype=torch.float32), 
+                                 torch.tensor(omega, dtype=torch.float32), 
+                                 torch.tensor(pitch, dtype=torch.float32), 
+                                 torch.tensor(v_x, dtype=torch.float32), 
+                                 torch.tensor(v_y, dtype=torch.float32),
+                                 torch.tensor(action_left, dtype=torch.float32),
+                                 torch.tensor(action_right, dtype=torch.float32)], dim=-1)
+    
+    for i in range(len(training_data) - WINDOW_SIZE):
+        windows.append(training_data[i:i+WINDOW_SIZE])
+    training_data = torch.stack(windows)  
+    print(training_data.shape)
+    print(len(error))
 
     return training_data, target
-
-'''
-Hyperparameter settings'''
-HIDDEN_DIM = 20
-LR = 0.05
-EPOCH = 100
-WINDOW_SIZE = 100
-INPUT_SIZE = 1
-BATCH_SIZE = 1
 
 def train():
   model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE)
@@ -59,15 +78,39 @@ def train():
   history = []
 
   for epoch in tqdm(range(EPOCH)):
-    # print(f"Training epoch {i}")
     '''
     Gets the along wind for the estimation. We will take the last 100 time steps of the wind.
-    For now, wind strength is set to 25.
+    For now, wind strength is set to be uniformly distributed between a wind strength of 0-25. 
     '''
-    training_data, target = prepare_wind(batch=True)  
+    distance, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False)
+    # training_data, target = prepare_wind(batch=True)  
+    distance = torch.tensor(distance, dtype=torch.float32)
+    bearing = torch.tensor(bearing, dtype=torch.float32)
+    omega = torch.tensor(omega, dtype=torch.float32)
+    pitch = torch.tensor(pitch, dtype=torch.float32)
+    v_x = torch.tensor(np.array(v_x), dtype=torch.float32)
+    v_y = torch.tensor(np.array(v_y), dtype=torch.float32)
+    wind_along =  torch.tensor((wind[:, 0]), dtype=torch.float32)    
+    wind_vertical =  torch.tensor(wind[:, 1], dtype=torch.float32)
+    action_left = torch.tensor(action_left, dtype=torch.float32)
+    action_right = torch.tensor(action_right, dtype=torch.float32)
 
-    # Flatten to [num_samples, WINDOW_SIZE, 1]
-    # training_data = training_data.squeeze(-1)
+    training_data = torch.stack([distance, bearing, omega, pitch, v_x, v_y, action_left, action_right], dim=-1)
+    target = wind_along.detach().clone()
+    # target = torch.stack([wind_along, wind_vertical], dim=-1)
+
+    '''
+    Create the sliding window training data with the targets.
+    '''
+    windows = []
+    for i in range(len(training_data) - WINDOW_SIZE):
+        windows.append(training_data[i:i+WINDOW_SIZE])
+    training_data = torch.stack(windows)   
+    target = target[WINDOW_SIZE:]  
+
+    '''
+    Create the data loader
+    '''
     dataset = TensorDataset(training_data, target)
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     
@@ -75,37 +118,53 @@ def train():
     for batch_x, batch_y in loader:
       optimizer.zero_grad()
       output = model(batch_x)
-      loss = loss_function(output, batch_y)
+      loss = loss_function(output, batch_y.unsqueeze(-1))
       loss.backward()
       epoch_loss += loss.item()
       optimizer.step()
 
     history.append(epoch_loss)
 
+  '''
+  Plot out the training loss
+  '''
   fig = plt.figure()
   axes = fig.add_subplot(111)
   axes.plot(range(len(history)), history)
   axes.set_title("loss over training epoches")
+  plt.show()
 
-  torch.save(model.state_dict(), './wind_estimator.mdl')
+  '''
+  Saves the model
+  '''
+  torch.save(model.state_dict(), './vertical_sim/wind_estimator.mdl')
 
-def eval():
+def eval_wind():
   model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE)
-  model.load_state_dict(torch.load('./wind_estimator.mdl'))
-  # See what the scores are after training
+  model.load_state_dict(torch.load('./vertical_sim/wind_estimator.mdl'))
+
   with torch.no_grad():
     testing_data, target = prepare_wind(batch=False) 
-    preds = []
+    testing_data = torch.detach(testing_data).clone()
+    target = torch.detach(target).clone()
+
+    wind_along_preds = []
+    wind_along_target = target.detach().clone()
+
+    # wind_vertical_preds = []
+    # wind_vertical_target = target[:, 1]
     for data in testing_data:
-      data = data.unsqueeze(-1).transpose(0,1)
-      preds.append(model(data)[0].item())
-      
-    error = np.array(preds) - np.array(target)
+      data = data.unsqueeze(-1).transpose(0,2).transpose(1,2)                   # Rearranging the data to suit the format of the model inputs (batch, window_size, # features)
+      wind_along_preds.append(model(data)[0][0].item())
+      # wind_vertical_preds.append(model(data)[0][1].item())
+    
+    error_along = np.array(wind_along_preds) - np.array(wind_along_target)
+    # error_vertical = np.array(wind_vertical_preds) - np.array(wind_vertical_target)
     
     fig = plt.figure()
     axes = fig.add_subplot(111)
-    axes.plot(range(len(preds)), preds, color="black", alpha=0.3, label="estimated wind")
-    axes.plot(range(len(target)), target, color="red", alpha=0.3, label="true wind")
+    axes.plot(range(len(wind_along_preds)), wind_along_preds, color="black", alpha=0.3, label="estimated wind")
+    axes.plot(range(len(wind_along_target)), wind_along_target, color="red", alpha=0.3, label="true wind")
     axes.set_ylabel("Wind velocity magnitude (m/s)")
     axes.set_xlabel("Time (s)")
     axes.set_title("Wind estimator performance")
@@ -113,16 +172,33 @@ def eval():
 
     fig_err = plt.figure()
     axes_err = fig_err.add_subplot(111)
-    axes_err.plot(range(len(error)), error, color="black", alpha=0.3)
+    axes_err.plot(range(len(error_along)), error_along, color="black", alpha=0.3)
     axes_err.set_ylabel("Error (m/s)")
     axes_err.set_xlabel("Time (s)")
-    axes_err.set_title(f"Wind estimator performance - Error over time - Average error is {np.mean(np.array(error))}")
+    axes_err.set_title(f"Wind estimator performance - Error over time - Average error is {np.mean(np.array(error_along))}")
+
+    # fig_vertical = plt.figure()
+    # axes_vertical = fig_vertical.add_subplot(111)
+    # axes_vertical.plot(range(len(wind_vertical_preds)), wind_vertical_preds, color="black", alpha=0.3, label="estimated wind")
+    # axes_vertical.plot(range(len(wind_vertical_target)), wind_vertical_target, color="red", alpha=0.3, label="true wind")
+    # axes_vertical.set_ylabel("Wind velocity magnitude (m/s)")
+    # axes_vertical.set_xlabel("Time (s)")
+    # axes_vertical.set_title("Wind estimator performance")
+    # axes_vertical.legend()
+
+    # fig_vertical_err = plt.figure()
+    # axes_vertical_err = fig_vertical_err.add_subplot(111)
+    # axes_vertical_err.plot(range(len(error_vertical)), error_vertical, color="black", alpha=0.3)
+    # axes_vertical_err.set_ylabel("Error (m/s)")
+    # axes_vertical_err.set_xlabel("Time (s)")
+    # axes_vertical_err.set_title(f"Wind estimator performance - Error over time - Average error is {np.mean(np.array(error_along))}")
     plt.show()
 
 def load_wind_estimator():
   model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE)
-  model.load_state_dict(torch.load('./wind_estimator.mdl'))
+  model.load_state_dict(torch.load('./vertical_sims/wind_estimator.mdl'))
   return model, WINDOW_SIZE
+
 if __name__ == "__main__":
-   train()
-   eval()
+  train()
+  eval_wind()
