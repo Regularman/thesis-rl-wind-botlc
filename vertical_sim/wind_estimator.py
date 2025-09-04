@@ -11,15 +11,18 @@ from tqdm import tqdm
 from torch.utils.data import TensorDataset, DataLoader
 from vertical_sim import eval
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using {device}")
+
 '''
 Hyperparameter settings
 '''
 WINDOW_SIZE = 100
 INPUT_SIZE = 8
-HIDDEN_DIM = 10
+HIDDEN_DIM = 30
 LR = 0.05
-EPOCH = 100
-BATCH_SIZE = 1
+EPOCH = 600
+BATCH_SIZE = 4
 
 class LSTM_wind_estimator(nn.Module):
   def __init__(self, hidden_dim, input_size):
@@ -65,14 +68,12 @@ def prepare_wind(batch):
     
     for i in range(len(training_data) - WINDOW_SIZE):
         windows.append(training_data[i:i+WINDOW_SIZE])
-    training_data = torch.stack(windows)  
-    print(training_data.shape)
-    print(len(error))
+    training_data = torch.stack(windows)
 
     return training_data, target
 
 def train():
-  model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE)
+  model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE).to(device)
   loss_function = nn.MSELoss()
   optimizer = optim.SGD(model.parameters(), lr=LR)
   history = []
@@ -84,16 +85,16 @@ def train():
     '''
     distance, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False)
     # training_data, target = prepare_wind(batch=True)  
-    distance = torch.tensor(distance, dtype=torch.float32)
-    bearing = torch.tensor(bearing, dtype=torch.float32)
-    omega = torch.tensor(omega, dtype=torch.float32)
-    pitch = torch.tensor(pitch, dtype=torch.float32)
-    v_x = torch.tensor(np.array(v_x), dtype=torch.float32)
-    v_y = torch.tensor(np.array(v_y), dtype=torch.float32)
-    wind_along =  torch.tensor((wind[:, 0]), dtype=torch.float32)    
-    wind_vertical =  torch.tensor(wind[:, 1], dtype=torch.float32)
-    action_left = torch.tensor(action_left, dtype=torch.float32)
-    action_right = torch.tensor(action_right, dtype=torch.float32)
+    distance = torch.tensor(distance, dtype=torch.float32).to(device)
+    bearing = torch.tensor(bearing, dtype=torch.float32).to(device)
+    omega = torch.tensor(omega, dtype=torch.float32).to(device)
+    pitch = torch.tensor(pitch, dtype=torch.float32).to(device)
+    v_x = torch.tensor(np.array(v_x), dtype=torch.float32).to(device)
+    v_y = torch.tensor(np.array(v_y), dtype=torch.float32).to(device)
+    wind_along =  torch.tensor((wind[:, 0]), dtype=torch.float32).to(device)   
+    wind_vertical =  torch.tensor(wind[:, 1], dtype=torch.float32).to(device)
+    action_left = torch.tensor(action_left, dtype=torch.float32).to(device)
+    action_right = torch.tensor(action_right, dtype=torch.float32).to(device)
 
     training_data = torch.stack([distance, bearing, omega, pitch, v_x, v_y, action_left, action_right], dim=-1)
     target = wind_along.detach().clone()
@@ -105,9 +106,8 @@ def train():
     windows = []
     for i in range(len(training_data) - WINDOW_SIZE):
         windows.append(training_data[i:i+WINDOW_SIZE])
-    training_data = torch.stack(windows)   
-    target = target[WINDOW_SIZE:]  
-
+    training_data = torch.stack(windows).to(device)
+    target = target[WINDOW_SIZE:].to(device)
     '''
     Create the data loader
     '''
@@ -116,6 +116,7 @@ def train():
     
     epoch_loss = 0
     for batch_x, batch_y in loader:
+      batch_x, batch_y = batch_x.to(device), batch_y.to(device)
       optimizer.zero_grad()
       output = model(batch_x)
       loss = loss_function(output, batch_y.unsqueeze(-1))
