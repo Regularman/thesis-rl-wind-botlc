@@ -5,9 +5,7 @@ import torch.optim as optim
 from wind import Wind
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import statistics
 import numpy as np
-from tqdm import tqdm
 from torch.utils.data import TensorDataset, DataLoader
 from vertical_sim import eval
 
@@ -19,10 +17,12 @@ Hyperparameter settings
 '''
 WINDOW_SIZE = 100
 INPUT_SIZE = 8
-HIDDEN_DIM = 30
+HIDDEN_DIM = 32
 LR = 0.05
 EPOCH = 600
 BATCH_SIZE = 4
+NUM_LAYERS = 2
+DROPOUT = 0.1
 
 class LSTM_wind_estimator(nn.Module):
   def __init__(self, hidden_dim, input_size):
@@ -142,7 +142,8 @@ def train():
 
 def eval_wind():
   model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE)
-  model.load_state_dict(torch.load('./vertical_sim/wind_estimator.mdl'))
+
+  model.load_state_dict(torch.load('./vertical_sim/wind_estimator.mdl', map_location=torch.device("cpu")), strict=False)
 
   with torch.no_grad():
     testing_data, target = prepare_wind(batch=False) 
@@ -196,10 +197,10 @@ def eval_wind():
     plt.show()
 
 def load_wind_estimator():
-  model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE)
-  model.load_state_dict(torch.load('./vertical_sims/wind_estimator.mdl'))
+  model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE).to(device)
+  model.load_state_dict(torch.load('./vertical_sims/wind_estimator.mdl', map_location=torch.device("cpu")))
   return model, WINDOW_SIZE
 
 if __name__ == "__main__":
-  train()
+  # train()
   eval_wind()

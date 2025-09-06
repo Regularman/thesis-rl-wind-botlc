@@ -7,7 +7,7 @@ from gym_drone_model import *
 import os
 from event_handler import *
 from wind import *
-from wind_estimator import *
+from wind_estimator_final import *
 
 class DroneVertical(gym.Env):
   '''
@@ -51,8 +51,19 @@ class DroneVertical(gym.Env):
     self.reward_hist = []
     self.target_trajectory = []
     self.first_step = True
-    self.wind_window = [[], []] 
-    self.prev_action = np.array([0,0])
+    self.wind_window= [[],[]]
+    self.prev_action = [0,0]
+
+    ## Non normalised
+    self.distance_hist = []
+    self.bearing_hist = []
+    self.omega_hist = []
+    self.pitch_hist = []
+    self.action_left_hist = []
+    self.action_right_hist = []
+    self.v_x_hist = []
+    self.v_y_hist = []
+    self.wind_estimations = []
 
     ## Empirical parameters for velocity normalisation
     self.v_norm = 600
@@ -98,14 +109,7 @@ class DroneVertical(gym.Env):
       self.shade_image = pygame.image.load(img_path)
   
   def get_obs(self):
-    # lstm_model, WINDOW_SIZE = load_wind_estimator()
     wind_along = 0 
-    wind_vertical = 0
-    # if self.current_time_step >= WINDOW_SIZE: 
-    #   along_window = lstm_model(torch.from_numpy(np.array(self.wind_window[0])[-100:]).unsqueeze(1).unsqueeze(1).transpose(0,1))
-    #   vertical_window = lstm_model(torch.from_numpy(np.array(self.wind_window[1])[-100:]).unsqueeze(1).unsqueeze(1).transpose(0,1))
-    #   wind_along, _ = lstm_model(along_window)
-    #   wind_vertical, _ = lstm_model(vertical_window)
 
     velocity_x, velocity_y = self.drone.frame_shape.body.velocity_at_local_point((0, 0))
 
@@ -124,6 +128,11 @@ class DroneVertical(gym.Env):
 
     distance = math.sqrt(dx**2+dy**2) /(math.sqrt(2)*self.size)
 
+    if len(self.wind_estimations) == 0:
+      wind_along = 0
+    else: 
+      wind_along = self.wind_estimations[-1]
+
     return {"v": np.array([velocity_x, velocity_y], dtype=np.float32), 
             "omega": np.array([omega], dtype=np.float32),
             "pitch": np.array([alpha], dtype=np.float32), 
@@ -132,7 +141,7 @@ class DroneVertical(gym.Env):
             ##########
             # CHANGE #
             ##########
-            "wind_estimation": np.array([wind_along, wind_vertical], dtype=np.float32)}    
+            "wind_estimation": np.array([wind_along, 0], dtype=np.float32)}    
   
   def get_reward(self, truncated, terminated, obs, action):
     dx = self._target_position[0] - self._agent_position[0]
@@ -201,6 +210,41 @@ class DroneVertical(gym.Env):
     self.drone.frame_shape.body.apply_force_at_local_point(Vec2d(0, self.left_force), (-self.drone_radius, 0))
     self.drone.frame_shape.body.apply_force_at_local_point(Vec2d(0, self.right_force), (self.drone_radius, 0))
 
+    dx = self._target_position[0] - self._agent_position[0]
+    dy = self._target_position[1] - self._agent_position[1]
+    bearing = math.atan2(dy, dx) / math.pi
+
+    lstm_model, WINDOW_SIZE = load_wind_estimator_optimized()
+    if self.current_time_step >= WINDOW_SIZE: 
+      data = torch.stack([
+          torch.tensor(self.distance_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.bearing_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.omega_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.pitch_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.v_x_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.v_y_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.action_left_hist[-WINDOW_SIZE:], dtype=torch.float32),
+          torch.tensor(self.action_right_hist[-WINDOW_SIZE:], dtype=torch.float32)
+      ], dim=-1).to(device)
+
+      windows = create_sliding_windows_vectorized(data, WINDOW_SIZE)
+      prediction = lstm_model(torch.tensor(windows[-1].unsqueeze(-1).transpose(0,2).transpose(1,2))).item()
+      '''Low pass filtering'''
+      PASS_FILTER_SIZE = 5
+      if (len(self.wind_estimations) > PASS_FILTER_SIZE):
+          prediction  = (sum(self.wind_estimations[-PASS_FILTER_SIZE:]) + prediction)/(PASS_FILTER_SIZE + 1)
+      self.wind_estimations.append(prediction)
+
+    self.distance_hist.append(distance)
+    self.bearing_hist.append(bearing)
+    self.omega_hist.append(self.get_info()["angular_velocity"])
+    self.pitch_hist.append(self.get_info()["pitch"])
+    self.action_left_hist.append(self.left_force)
+    self.action_right_hist.append(self.right_force)
+
+    velocity_x, velocity_y = self.drone.frame_shape.body.velocity_at_local_point((0, 0))
+    self.v_x_hist.append(velocity_x)
+    self.v_y_hist.append(velocity_y)
     '''
     Updates wind if it is implemented. 
     '''

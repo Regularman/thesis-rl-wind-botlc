@@ -78,7 +78,7 @@ def eval(render):
                  frequency = frequency,
                  force_scale=1000)
 
-  model = SAC.load("new_agent.zip", verbose=0)
+  model = SAC.load("./new_agent.zip", verbose=0)
 
 
   model.set_env(env)
@@ -223,7 +223,7 @@ def calc_average_error():
   # 4. Display the plot
   plt.show()
 if __name__ == "__main__":
-  # train()
+  train()
   # reward_graph()
   # calc_average_error()
   eval(render=True)
