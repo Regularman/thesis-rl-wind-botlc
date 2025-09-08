@@ -328,7 +328,7 @@ def load_wind_estimator_optimized():
     Load the optimized wind estimator model
     """
     model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE).to(device)
-    model.load_state_dict(torch.load('./vertical_sim/wind_estimator_best_most_recent.mdl', map_location=device))
+    model.load_state_dict(torch.load('./wind_estimator_best_most_recent.mdl', map_location=device))
     model.eval()
     return model, WINDOW_SIZE
 
