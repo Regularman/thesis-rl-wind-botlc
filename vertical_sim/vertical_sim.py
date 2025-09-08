@@ -12,6 +12,7 @@ import pandas as pd
 from tqdm import tqdm
 from scipy.stats import gaussian_kde
 import math
+from stable_baselines3.common.callbacks import BaseCallback
 
 env_id = "drone-2d-custom-v0"
 if env_id not in gym.registry:
@@ -21,11 +22,32 @@ if env_id not in gym.registry:
   )
 
 size = 800
-frequency = 60.0
+frequency = 30.0
 desired_distance = 30
 n_steps = 6000
 total_timesteps = 100000
 
+# Custom callback to stop after N episodes
+class StopTrainingOnEpisodes(BaseCallback):
+    def __init__(self, max_episodes: int, verbose=0):
+        super().__init__(verbose)
+        self.max_episodes = max_episodes
+        self.episode_count = 0
+
+    def _on_step(self) -> bool:
+        # Check if any environments are done
+        if "dones" in self.locals:
+            dones = self.locals["dones"]
+            for done in dones:
+                if done:
+                    self.episode_count += 1
+                    if self.verbose > 0:
+                        print(f"Episode {self.episode_count} finished")
+                    if self.episode_count >= self.max_episodes:
+                        print(f"Reached {self.max_episodes} episodes, stopping training.")
+                        return False  # stop training
+        return True
+    
 def step_decay_lr(progress_remaining):
     """
     Step decay based on absolute timestep.
@@ -49,10 +71,16 @@ def train():
                          frequency = frequency, 
                          force_scale=1000), filename="./logs/monitor.csv")
   
-  model = SAC("MultiInputPolicy", env, verbose=1, action_noise=NormalActionNoise(mean=np.array([0,0]), sigma=np.array([0.25,0.25])), learning_rate=step_decay_lr)
+  model = SAC("MultiInputPolicy", 
+              env, 
+              verbose=1, 
+              action_noise=NormalActionNoise(mean=np.array([0,0]), sigma=np.array([0.25,0.25])), 
+              learning_rate=step_decay_lr)
 
-  ## Note that the frequency is 60
-  model.learn(total_timesteps=total_timesteps)
+  n_episodes = 24000
+  callback = StopTrainingOnEpisodes(max_episodes=n_episodes, verbose=0)
+  ## Note that the frequency is 30
+  model.learn(total_timesteps=1e100, callback=callback)
   model.save('new_agent')
   
 def reward_graph():
@@ -78,8 +106,8 @@ def eval(render):
                  frequency = frequency,
                  force_scale=1000)
 
-  model = SAC.load("./new_agent.zip", verbose=0)
-
+  # model = SAC.load("./new_agent.zip", verbose=0)
+  model = SAC.load("./wind_estimator_baseline.zip", verbose=0)
 
   model.set_env(env)
 
@@ -99,6 +127,7 @@ def eval(render):
   bearing = []
   wind = []
   pitch = []
+  along_wind_estimation = []
 
   out_of_bounds = False
   failed = False
@@ -131,7 +160,7 @@ def eval(render):
       error.append(np.linalg.norm(info["target_position"]-info["position"]))
       wind.append(info["wind"].get_wind(info["current_time_step"], frequency))
       pitch.append(obs["pitch"][0])
-
+      along_wind_estimation.append(obs["wind_estimation"][0])
       env.render()
 
       if terminated or truncated:
@@ -179,6 +208,14 @@ def eval(render):
       axes_bearing = figure_bearing.add_subplot(111)
       axes_bearing.plot(range(len(bearing)), bearing)
       axes_bearing.set_title("bearing observations")
+      
+      figure_wind = plt.figure()
+      axes_wind = figure_wind.add_subplot(111)
+      wind = np.array(wind)
+      axes_wind.plot(range(len(along_wind_estimation)), along_wind_estimation, color="red", alpha=0.3, label="estimated wind")
+      axes_wind.plot(range(len(wind[:, 0])), wind[:, 0], color="black", alpha=0.3, label="actual wind")
+      axes_wind.set_title("Estimated wind vs Actual wind")
+      axes_wind.legend()
 
       plt.show()
 

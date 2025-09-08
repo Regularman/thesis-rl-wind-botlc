@@ -18,6 +18,7 @@ class DroneVertical(gym.Env):
     self.render_sim = render_sim
     self.render_path = render_path
     self.render_shade = render_shade
+    self.episode_count = 0
 
     ## Set up the relevant parameters
     self.size = size
@@ -128,19 +129,22 @@ class DroneVertical(gym.Env):
 
     distance = math.sqrt(dx**2+dy**2) /(math.sqrt(2)*self.size)
 
-    if len(self.wind_estimations) == 0:
-      wind_along = 0
-    else: 
-      wind_along = self.wind_estimations[-1]
+    p_ground_truth = 1 - 0.0333*(math.floor(self.episode_count/800))
+
+    counts = np.random.multinomial(1, [p_ground_truth, 1-p_ground_truth])
+    if counts[0] == 1:  
+      wind_along = self.wind.get_wind(self.current_time_step, self.frequency)[0]
+    else:
+      if len(self.wind_estimations) == 0:
+        wind_along = 0
+      else: 
+        wind_along = self.wind_estimations[-1]
 
     return {"v": np.array([velocity_x, velocity_y], dtype=np.float32), 
             "omega": np.array([omega], dtype=np.float32),
             "pitch": np.array([alpha], dtype=np.float32), 
             "distance": np.array([distance], dtype=np.float32), 
             "bearing": np.array([bearing], dtype=np.float32),
-            ##########
-            # CHANGE #
-            ##########
             "wind_estimation": np.array([wind_along, 0], dtype=np.float32)}    
   
   def get_reward(self, truncated, terminated, obs, action):
@@ -176,7 +180,7 @@ class DroneVertical(gym.Env):
         if self.render_sim is True and self.render_path is True: self.add_postion_to_drop_path()
         if self.render_sim is True and self.render_shade is True: self.add_drone_shade()
 
-    #Saving drone's position for drawing
+    # Saving drone's position for drawing
     if self.first_step is True:
         if self.render_sim is True and self.render_path is True: self.add_postion_to_drop_path()
         if self.render_sim is True and self.render_path is True: self.add_postion_to_flight_path()
@@ -235,16 +239,16 @@ class DroneVertical(gym.Env):
           prediction  = (sum(self.wind_estimations[-PASS_FILTER_SIZE:]) + prediction)/(PASS_FILTER_SIZE + 1)
       self.wind_estimations.append(prediction)
 
-    self.distance_hist.append(distance)
+    ## Distance needs to be normalised by the size of the gymnasium environment hte 
+    self.distance_hist.append(distance/self.size)
     self.bearing_hist.append(bearing)
     self.omega_hist.append(self.get_info()["angular_velocity"])
     self.pitch_hist.append(self.get_info()["pitch"])
-    self.action_left_hist.append(self.left_force)
-    self.action_right_hist.append(self.right_force)
+    self.action_left_hist.append(action[0]/2+0.5)
+    self.action_right_hist.append(action[0]/2+0.5)
 
-    velocity_x, velocity_y = self.drone.frame_shape.body.velocity_at_local_point((0, 0))
-    self.v_x_hist.append(velocity_x)
-    self.v_y_hist.append(velocity_y)
+    self.v_x_hist.append(self.get_obs()["v"][0])
+    self.v_y_hist.append(self.get_obs()["v"][1])
     '''
     Updates wind if it is implemented. 
     '''
@@ -330,7 +334,7 @@ class DroneVertical(gym.Env):
         return frame
     else:     
       pygame.display.flip()
-      self.clock.tick(60)
+      self.clock.tick(30)
         
   def get_info(self):
     velocity_x, velocity_y = self.drone.frame_shape.body.velocity_at_local_point((0, 0))
@@ -356,6 +360,8 @@ class DroneVertical(gym.Env):
     self.target_trajectory = []
     self.current_time_step = 0
     self.wind_window = [[], []]
+
+    self.episode_count += 1
 
     wind_strength = np.random.uniform(0,self.wind_strength,size=1).astype(np.float32)
     self.wind = Wind(wind_strength=wind_strength)

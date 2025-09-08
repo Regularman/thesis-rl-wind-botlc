@@ -244,7 +244,7 @@ def eval_wind_optimized():
     Optimized evaluation with batch processing
     """
     model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE).to(device)
-    model.load_state_dict(torch.load('./vertical_sim/wind_estimator_final.mdl', map_location=device))
+    model.load_state_dict(torch.load('./vertical_sim/wind_estimator_best_most_recent.mdl', map_location=device))
     model.eval()
 
     print("Generating test data...")
@@ -280,14 +280,13 @@ def eval_wind_optimized():
         wind_along_preds = []
 
         '''Low pass filtering'''
-        PASS_FILTER_SIZE = 5
+        PASS_FILTER_SIZE = 3
         sliding_window = []
 
         for i in range(0, len(testing_windows), batch_size):
             batch = testing_windows[i:i+batch_size]
-            print(batch.shape)
             prediction = model(batch).cpu().numpy().flatten()
-            if (len(sliding_window) > PASS_FILTER_SIZE):
+            if (len(sliding_window) > PASS_FILTER_SIZE and PASS_FILTER_SIZE != 0):
                 prediction  = (sum(sliding_window[-PASS_FILTER_SIZE:]) + prediction)/(PASS_FILTER_SIZE + 1)
             sliding_window.append(prediction)
             wind_along_preds.extend(prediction)
@@ -329,7 +328,7 @@ def load_wind_estimator_optimized():
     Load the optimized wind estimator model
     """
     model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE).to(device)
-    model.load_state_dict(torch.load('./vertical_sim/wind_estimator_final.mdl', map_location=device))
+    model.load_state_dict(torch.load('./vertical_sim/wind_estimator_best_most_recent.mdl', map_location=device))
     model.eval()
     return model, WINDOW_SIZE
 
