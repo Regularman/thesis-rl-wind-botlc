@@ -167,9 +167,14 @@ class DroneVertical(gym.Env):
       if action_right_delta > 0.05:
         reward -= 10
     
-    # thrust_left = action[0]/2+0.5
-    # thrust_right = action[1]/2+0.5
+    thrust_left = action[0]/2+0.5
+    thrust_right = action[1]/2+0.5
 
+    thrust_delta_left = abs(self.prev_action[0] - thrust_left)
+    thrust_delta_right = abs(self.prev_action[1] - thrust_right)
+
+    reward -= thrust_delta_left 
+    reward -= thrust_delta_right
     # reward -= thrust_left**2
     # reward -= thrust_right**2
     
@@ -293,8 +298,8 @@ class DroneVertical(gym.Env):
     reward = self.get_reward(truncated, terminated, obs, action)
 
     ## Updating the previous force
-    self.prev_action[0] = self.left_force
-    self.prev_action[1] = self.right_force
+    self.prev_action[0] = action[0]/2+0.5
+    self.prev_action[1] = action[1]/2+0.5
 
     return obs, reward, terminated, truncated, self.get_info()
   

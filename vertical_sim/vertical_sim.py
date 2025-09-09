@@ -26,27 +26,6 @@ frequency = 30.0
 desired_distance = 30
 n_steps = 1000
 total_timesteps = 100000
-
-# Custom callback to stop after N episodes
-class StopTrainingOnEpisodes(BaseCallback):
-    def __init__(self, max_episodes: int, verbose=0):
-        super().__init__(verbose)
-        self.max_episodes = max_episodes
-        self.episode_count = 0
-
-    def _on_step(self) -> bool:
-        # Check if any environments are done
-        if "dones" in self.locals:
-            dones = self.locals["dones"]
-            for done in dones:
-                if done:
-                    self.episode_count += 1
-                    if self.verbose > 0:
-                        print(f"Episode {self.episode_count} finished")
-                    if self.episode_count >= self.max_episodes:
-                        print(f"Reached {self.max_episodes} episodes, stopping training.")
-                        return False  # stop training
-        return True
     
 def step_decay_lr(progress_remaining):
     """
@@ -69,7 +48,8 @@ def train():
                          n_steps=n_steps, 
                          desired_distance=desired_distance,
                          frequency = frequency, 
-                         force_scale=1000), filename="./logs/monitor.csv")
+                         force_scale=1000,
+                         p_ground_truth = 1), filename="./logs/monitor.csv")
   
   model = SAC("MultiInputPolicy", 
               env, 
@@ -77,10 +57,9 @@ def train():
               action_noise=NormalActionNoise(mean=np.array([0,0]), sigma=np.array([0.25,0.25])), 
               learning_rate=step_decay_lr)
 
-  n_episodes = 24000
-  callback = StopTrainingOnEpisodes(max_episodes=n_episodes, verbose=0)
+
   ## Note that the frequency is 30
-  model.learn(total_timesteps=100000, callback=callback)
+  model.learn(total_timesteps=100000)
   model.save('new_agent')
   
 def reward_graph():
@@ -108,7 +87,8 @@ def eval(render, p_ground_truth):
                  p_ground_truth=p_ground_truth)
 
   # model = SAC.load("./new_agent.zip", verbose=0)
-  model = SAC.load("./wind_estimator_baseline.zip", verbose=0)
+
+  model = SAC.load("./new_agent", verbose=0)
 
   model.set_env(env)
 
@@ -283,5 +263,5 @@ if __name__ == "__main__":
   train()
   # reward_graph()
   # calc_average_error()
-  # eval(render=True)
+  eval(render=True, p_ground_truth=1)
 

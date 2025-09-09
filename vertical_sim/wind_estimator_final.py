@@ -95,16 +95,19 @@ def generate_training_batch(p_ground_truth, batch_size=BATCH_SIZE):
             torch.tensor(np.array(v_y), dtype=torch.float32),
             torch.tensor(action_left, dtype=torch.float32),
             torch.tensor(action_right, dtype=torch.float32)
-        ], dim=-1)
+        ], dim=-1).to(device)
         
         wind_along = torch.tensor(wind[:, 0], dtype=torch.float32)
         
         return training_data, wind_along
 
-    # Generate multiple episodes
+    # # Generate multiple episodes
     episodes = []
-    for _ in range(batch_size):
-        episodes.append(generate_single_episode())
+    # for _ in range(batch_size):
+    #     episodes.append(generate_single_episode())
+
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        episodes = list(executor.map(generate_single_episode, range(batch_size)))
     
     return episodes
 
