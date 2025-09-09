@@ -167,11 +167,11 @@ class DroneVertical(gym.Env):
       if action_right_delta > 0.05:
         reward -= 10
     
-    thrust_left = action[0]/2+0.5
-    thrust_right = action[1]/2+0.5
+    # thrust_left = action[0]/2+0.5
+    # thrust_right = action[1]/2+0.5
 
-    reward -= thrust_left**2
-    reward -= thrust_right**2
+    # reward -= thrust_left**2
+    # reward -= thrust_right**2
     
     '''This is negative reward function when the agent flys out of bounds or becomes vertical leading it to drop out of the air'''
     if truncated:
