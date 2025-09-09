@@ -12,6 +12,7 @@ from vertical_sim import eval
 import torch.multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import time
+from vertical_sim import train
 
 '''
 Optimized Hyperparameter settings for better GPU utilization
@@ -396,6 +397,7 @@ if __name__ == "__main__":
 
     for it in range(HANDOFF_ITERATIONS):
         model = train_optimized(iteration = it)
+        train()
     
     # Evaluate optimized model
     eval_wind_optimized()
