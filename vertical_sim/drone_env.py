@@ -13,12 +13,11 @@ class DroneVertical(gym.Env):
   '''
   Observation is the agent's view of the environment and info is just information used for debugging
   '''
-  def __init__(self, render_sim, render_path, render_shade, size, n_steps, desired_distance, frequency, force_scale):
+  def __init__(self, render_sim, render_path, render_shade, size, n_steps, desired_distance, frequency, force_scale, p_ground_truth):
   
     self.render_sim = render_sim
     self.render_path = render_path
     self.render_shade = render_shade
-    self.episode_count = 0
 
     ## Set up the relevant parameters
     self.size = size
@@ -27,6 +26,7 @@ class DroneVertical(gym.Env):
     self.force_scale = force_scale
     self.frequency = frequency
     self.drone_shade_distance = 70
+    self.p_ground_truth = p_ground_truth
 
     '''
     Set the uniform distribution range, from 0 to x.
@@ -129,9 +129,8 @@ class DroneVertical(gym.Env):
 
     distance = math.sqrt(dx**2+dy**2) /(math.sqrt(2)*self.size)
 
-    p_ground_truth = 1 - 0.0333*(math.floor(self.episode_count/800))
-
-    counts = np.random.multinomial(1, [p_ground_truth, 1-p_ground_truth])
+    counts = np.random.multinomial(1, [self.p_ground_truth, 1-self.p_ground_truth])
+    wind_along = self.wind.get_wind(self.current_time_step, self.frequency)[0]
     if counts[0] == 1:  
       wind_along = self.wind.get_wind(self.current_time_step, self.frequency)[0]
     else:
@@ -168,7 +167,12 @@ class DroneVertical(gym.Env):
       if action_right_delta > 0.05:
         reward -= 10
     
+    thrust_left = action[0]/2+0.5
+    thrust_right = action[1]/2+0.5
 
+    reward -= thrust_left**2
+    reward -= thrust_right**2
+    
     '''This is negative reward function when the agent flys out of bounds or becomes vertical leading it to drop out of the air'''
     if truncated:
       reward -= 5
@@ -218,26 +222,33 @@ class DroneVertical(gym.Env):
     dy = self._target_position[1] - self._agent_position[1]
     bearing = math.atan2(dy, dx) / math.pi
 
-    lstm_model, WINDOW_SIZE = load_wind_estimator_optimized()
-    if self.current_time_step >= WINDOW_SIZE: 
-      data = torch.stack([
-          torch.tensor(self.distance_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.bearing_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.omega_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.pitch_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.v_x_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.v_y_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.action_left_hist[-WINDOW_SIZE:], dtype=torch.float32),
-          torch.tensor(self.action_right_hist[-WINDOW_SIZE:], dtype=torch.float32)
-      ], dim=-1).to(device)
+    '''
+    Updates the wind estimation per step frame
+    '''
+    try:
+      lstm_model, WINDOW_SIZE = load_wind_estimator_optimized()
+      if self.current_time_step >= WINDOW_SIZE: 
+        data = torch.stack([
+            torch.tensor(self.distance_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.bearing_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.omega_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.pitch_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.v_x_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.v_y_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.action_left_hist[-WINDOW_SIZE:], dtype=torch.float32),
+            torch.tensor(self.action_right_hist[-WINDOW_SIZE:], dtype=torch.float32)
+        ], dim=-1).to(device)
 
-      windows = create_sliding_windows_vectorized(data, WINDOW_SIZE)
-      prediction = lstm_model(torch.tensor(windows[-1].unsqueeze(-1).transpose(0,2).transpose(1,2))).item()
-      '''Low pass filtering'''
-      PASS_FILTER_SIZE = 5
-      if (len(self.wind_estimations) > PASS_FILTER_SIZE):
-          prediction  = (sum(self.wind_estimations[-PASS_FILTER_SIZE:]) + prediction)/(PASS_FILTER_SIZE + 1)
-      self.wind_estimations.append(prediction)
+        windows = create_sliding_windows_vectorized(data, WINDOW_SIZE)
+        with torch.no_grad():
+          prediction = lstm_model(torch.tensor(windows[-1].unsqueeze(-1).transpose(0,2).transpose(1,2))).item()
+        '''Low pass filtering'''
+        PASS_FILTER_SIZE = 5
+        if (len(self.wind_estimations) > PASS_FILTER_SIZE):
+            prediction  = (sum(self.wind_estimations[-PASS_FILTER_SIZE:]) + prediction)/(PASS_FILTER_SIZE + 1)
+        self.wind_estimations.append(prediction)
+    except:
+      self.wind_estimations.append(-1)
 
     ## Distance needs to be normalised by the size of the gymnasium environment hte 
     self.distance_hist.append(distance/self.size)
@@ -360,8 +371,6 @@ class DroneVertical(gym.Env):
     self.target_trajectory = []
     self.current_time_step = 0
     self.wind_window = [[], []]
-
-    self.episode_count += 1
 
     wind_strength = np.random.uniform(0,self.wind_strength,size=1).astype(np.float32)
     self.wind = Wind(wind_strength=wind_strength)

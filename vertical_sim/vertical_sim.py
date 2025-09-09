@@ -24,7 +24,7 @@ if env_id not in gym.registry:
 size = 800
 frequency = 30.0
 desired_distance = 30
-n_steps = 6000
+n_steps = 1000
 total_timesteps = 100000
 
 # Custom callback to stop after N episodes
@@ -80,7 +80,7 @@ def train():
   n_episodes = 24000
   callback = StopTrainingOnEpisodes(max_episodes=n_episodes, verbose=0)
   ## Note that the frequency is 30
-  model.learn(total_timesteps=1e100, callback=callback)
+  model.learn(total_timesteps=100000, callback=callback)
   model.save('new_agent')
   
 def reward_graph():
@@ -95,7 +95,7 @@ def reward_graph():
   axes_reward.set_ylabel("Reward")
   plt.show()
 
-def eval(render):
+def eval(render, p_ground_truth):
   env = gym.make('drone-2d-custom-v0',
                  render_sim=render,
                  render_path=render,
@@ -104,7 +104,8 @@ def eval(render):
                  n_steps=n_steps, 
                  desired_distance=desired_distance,
                  frequency = frequency,
-                 force_scale=1000)
+                 force_scale=1000,
+                 p_ground_truth=p_ground_truth)
 
   # model = SAC.load("./new_agent.zip", verbose=0)
   model = SAC.load("./wind_estimator_baseline.zip", verbose=0)
@@ -172,51 +173,70 @@ def eval(render):
     else:
       label = "mission unsuccessful"
     if render:
-      figure = plt.figure()
-      axes = figure.add_subplot(111)
-      axes.plot(np.array(trajectory)[:,0], np.array(trajectory)[:,1], '-',  alpha=0.5)
-      axes.scatter(trajectory[-1][0], trajectory[-1][1], label="END")
-      axes.plot(np.array(target_trajectory)[:, 0], np.array(target_trajectory)[:,1], '-' , color="red", alpha=0.5)
-      axes.scatter(info["target_position"][0], info["target_position"][1], s=20, marker="X",color="black", label="TARGET END")
-      axes.set_title(f"{label}")
+      fig, axes = plt.subplots(4, 2, figsize=(14, 12))
+      axes = axes.flatten()  # flatten for easier indexing
 
-      figure_thrust = plt.figure()
-      axes_thrust = figure_thrust.add_subplot(111)
-      axes_thrust.plot(np.linspace(0,int(len(thrust_left)/frequency), len(thrust_left)), thrust_left, alpha=0.3, color="red", label="thrust left rotor")
-      axes_thrust.plot(np.linspace(0,int(len(thrust_left)/frequency), len(thrust_left)), thrust_right, alpha=0.3, color="blue", label="thrust right rotor")
-      axes_thrust.legend()
-      axes_thrust.set_title("Thrust over flight duration")
-      axes_thrust.set_xlabel("Time (s)")
-      axes_thrust.set_ylabel("Normalised thrust")
+      # 1. Trajectory
+      axes[0].plot(np.array(trajectory)[:,0], np.array(trajectory)[:,1], '-', alpha=0.5)
+      axes[0].scatter(trajectory[0][0], trajectory[0][1], color="green", label="START")
+      axes[0].scatter(trajectory[-1][0], trajectory[-1][1], color="blue", label="END")
+      axes[0].plot(np.array(target_trajectory)[:, 0], np.array(target_trajectory)[:,1], '-', color="red", alpha=0.5)
+      axes[0].scatter(info["target_position"][0], info["target_position"][1], 
+                      s=20, marker="X", color="black", label="TARGET END")
+      axes[0].set_title(f"Trajectory ({label})")
+      axes[0].legend()
+      axes[0].grid(alpha=0.3)
 
-      figure_error = plt.figure()
-      axes_err = figure_error.add_subplot(111)
-      axes_err.plot(range(len(error)), error)
-      axes_err.set_title("Distance error of UAV from target over the flight duration")
+      # 2. Thrust
+      time_thrust = np.arange(len(thrust_left)) / frequency
+      axes[1].plot(time_thrust, thrust_left, alpha=0.3, color="red", label="left rotor")
+      axes[1].plot(time_thrust, thrust_right, alpha=0.3, color="blue", label="right rotor")
+      axes[1].set_title("Thrust over flight")
+      axes[1].set_xlabel("Time (s)")
+      axes[1].set_ylabel("Normalised thrust")
+      axes[1].legend()
+      axes[1].grid(alpha=0.3)
 
-      figure_omega = plt.figure()
-      axes_omega = figure_omega.add_subplot(111)
-      axes_omega.plot(range(len(omega)), omega)
-      axes_omega.set_title("Angular Velocity")
+      # 3. Error
+      axes[2].plot(np.arange(len(error))/frequency, error)
+      axes[2].set_title("Distance error")
+      axes[2].set_xlabel("Time (s)")
+      axes[2].grid(alpha=0.3)
 
-      figure_v = plt.figure()
-      axes_v = figure_v.add_subplot(111)
-      axes_v.plot(range(len(v_x)), np.sqrt(np.array(v_x)**2+np.array(v_y)**2))
-      axes_v.set_title("Velocity")
+      # 4. Angular velocity
+      axes[3].plot(np.arange(len(omega))/frequency, omega)
+      axes[3].set_title("Angular velocity")
+      axes[3].set_xlabel("Time (s)")
+      axes[3].grid(alpha=0.3)
 
-      figure_bearing = plt.figure()
-      axes_bearing = figure_bearing.add_subplot(111)
-      axes_bearing.plot(range(len(bearing)), bearing)
-      axes_bearing.set_title("bearing observations")
-      
-      figure_wind = plt.figure()
-      axes_wind = figure_wind.add_subplot(111)
+      # 5. Velocity
+      vel_mag = np.sqrt(np.array(v_x)**2 + np.array(v_y)**2)
+      axes[4].plot(np.arange(len(v_x))/frequency, vel_mag)
+      axes[4].set_title("Velocity magnitude")
+      axes[4].set_xlabel("Time (s)")
+      axes[4].grid(alpha=0.3)
+
+      # 6. Bearing
+      axes[5].plot(np.arange(len(bearing))/frequency, bearing)
+      axes[5].set_title("Bearing observations")
+      axes[5].set_xlabel("Time (s)")
+      axes[5].grid(alpha=0.3)
+
+      # 7. Wind
       wind = np.array(wind)
-      axes_wind.plot(range(len(along_wind_estimation)), along_wind_estimation, color="red", alpha=0.3, label="estimated wind")
-      axes_wind.plot(range(len(wind[:, 0])), wind[:, 0], color="black", alpha=0.3, label="actual wind")
-      axes_wind.set_title("Estimated wind vs Actual wind")
-      axes_wind.legend()
+      axes[6].plot(np.arange(len(along_wind_estimation))/frequency, along_wind_estimation,
+                  color="red", alpha=0.3, label="estimated")
+      axes[6].plot(np.arange(len(wind[:,0]))/frequency, wind[:,0],
+                  color="black", alpha=0.3, label="actual")
+      axes[6].set_title("Wind: estimated vs actual")
+      axes[6].set_xlabel("Time (s)")
+      axes[6].legend()
+      axes[6].grid(alpha=0.3)
 
+      # Hide any unused subplot slot (8th panel if 7 plots)
+      fig.delaxes(axes[7])
+
+      plt.tight_layout()
       plt.show()
 
     if info["position"][0] < 0 or info["position"][0] >= size or info["position"][1] < 0 or info["position"][1] >= size: 
@@ -263,5 +283,5 @@ if __name__ == "__main__":
   train()
   # reward_graph()
   # calc_average_error()
-  eval(render=True)
+  # eval(render=True)
 

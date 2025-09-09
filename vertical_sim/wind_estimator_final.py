@@ -20,10 +20,11 @@ WINDOW_SIZE = 180
 INPUT_SIZE = 8
 HIDDEN_DIM = 64
 LR = 0.003
-EPOCH = 500
+EPOCH = 1 #Instead of 500 for test
 BATCH_SIZE = 64  # Increased for better GPU utilization
 NUM_WORKERS = 32  # For DataLoader parallelization
 PREFETCH_FACTOR = 8  # For DataLoader optimization
+HANDOFF_ITERATIONS = 30
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -77,12 +78,12 @@ def create_sliding_windows_vectorized(data, window_size):
     
     return windows
 
-def generate_training_batch(batch_size=BATCH_SIZE):
+def generate_training_batch(p_ground_truth, batch_size=BATCH_SIZE):
     """
     Generate multiple training episodes in parallel
     """
     def generate_single_episode():
-        distance, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False)
+        distance, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False, p_ground_truth=p_ground_truth)
         
         # Convert to tensors on CPU first, then move to device in DataLoader
         training_data = torch.stack([
@@ -139,7 +140,12 @@ def prepare_batch_data(episodes):
     
     return batch_windows, batch_targets
 
-def train_optimized():
+def train_optimized(iteration):
+    """
+    Calculate the probability for the wind_estimator to be used 
+    """
+    p_ground_truth = 1 - iteration/HANDOFF_ITERATIONS
+
     """
     Optimized training function with vectorization and parallelization
     """
@@ -162,7 +168,7 @@ def train_optimized():
         epoch_start = time.time()
         
         # Generate batch of episodes - use fewer episodes but larger batches for efficiency
-        episodes = generate_training_batch(batch_size=8)
+        episodes = generate_training_batch(batch_size=8, p_ground_truth=p_ground_truth)
         batch_windows, batch_targets = prepare_batch_data(episodes)
         
         if batch_windows is None:
@@ -226,17 +232,17 @@ def train_optimized():
     print(f"Training completed in {total_time:.2f} seconds")
     
     # Plot training history
-    plt.figure(figsize=(10, 6))
-    plt.plot(range(len(history)), history)
-    plt.title("Training Loss Over Epochs (Optimized)")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.yscale('log')
-    plt.grid(True)
-    plt.show()
+    # plt.figure(figsize=(10, 6))
+    # plt.plot(range(len(history)), history)
+    # plt.title("Training Loss Over Epochs (Optimized)")
+    # plt.xlabel("Epoch")
+    # plt.ylabel("Loss")
+    # plt.yscale('log')
+    # plt.grid(True)
+    # plt.show()
     
     # Save final model
-    torch.save(model.state_dict(), './wind_estimator_optimized.mdl')
+    torch.save(model.state_dict(), './wind_estimator_handoff.mdl')
     return model
 
 def eval_wind_optimized():
@@ -328,7 +334,7 @@ def load_wind_estimator_optimized():
     Load the optimized wind estimator model
     """
     model = LSTM_wind_estimator(hidden_dim=HIDDEN_DIM, input_size=INPUT_SIZE).to(device)
-    model.load_state_dict(torch.load('./wind_estimator_best_most_recent.mdl', map_location=device))
+    model.load_state_dict(torch.load('./wind_estimator_handoff.mdl', map_location=device))
     model.eval()
     return model, WINDOW_SIZE
 
@@ -387,7 +393,9 @@ if __name__ == "__main__":
     # print("\nStarting optimized training and evaluation...")
     
     # # Train optimized model
-    # model = train_optimized()
+
+    for it in range(HANDOFF_ITERATIONS):
+        model = train_optimized(iteration = it)
     
     # Evaluate optimized model
     eval_wind_optimized()
