@@ -39,7 +39,7 @@ def step_decay_lr(progress_remaining):
     n = current_step // decay_steps
     return initial_lr * (0.95** n)
 
-def train():
+def train(p_ground_truth):
   env = Monitor(gym.make('drone-2d-custom-v0', 
                          render_sim = False, 
                          render_path = False, 
@@ -48,7 +48,8 @@ def train():
                          n_steps=n_steps, 
                          desired_distance=desired_distance,
                          frequency = frequency, 
-                         force_scale=1000), filename="./logs/monitor.csv")
+                         force_scale=1000,
+                         p_ground_truth = p_ground_truth), filename="./logs/monitor.csv")
   
   model = SAC("MultiInputPolicy", 
               env, 
@@ -56,7 +57,7 @@ def train():
               action_noise=NormalActionNoise(mean=np.array([0,0]), sigma=np.array([0.25,0.25])), 
               learning_rate=step_decay_lr)
   ## Note that the frequency is 30
-  model.learn(total_timesteps=100000)
+  model.learn(total_timesteps=total_timesteps)
   model.save('new_agent')
   
 def reward_graph():
@@ -107,9 +108,7 @@ def eval(render, p_ground_truth):
       vec_env = SubprocVecEnv(env_fns)  # runs envs in parallel subprocesses
   except Exception:
       vec_env = DummyVecEnv(env_fns)    # fallback if env cannot be pickled
-
   vec_env = VecMonitor(vec_env)          # track episode rewards/lengths
-
 
   model = SAC.load("./new_agent.zip", verbose=0, env=vec_env)
   model.set_env(vec_env)
@@ -319,19 +318,22 @@ def eval(render, p_ground_truth):
     plt.tight_layout()
     plt.show()
 
-  return {
-      "errors": errors,
-      "trajectories": trajectories,
-      "target_trajectories": target_trajectories,
-      "thrust_left": thrust_left,
-      "thrust_right": thrust_right,
-      "wind": wind,
-      "v_x": v_x,
-      "v_y": v_y,
-      "omega": omega,
-      "pitch": pitch,
-      "bearing": bearing
-  }
+
+  return errors, wind, bearing, v_x, v_y, omega, pitch, thrust_left, thrust_right
+
+  # return {
+  #     "errors": errors,
+  #     "trajectories": trajectories,
+  #     "target_trajectories": target_trajectories,
+  #     "thrust_left": thrust_left,
+  #     "thrust_right": thrust_right,
+  #     "wind": wind,
+  #     "v_x": v_x,
+  #     "v_y": v_y,
+  #     "omega": omega,
+  #     "pitch": pitch,
+  #     "bearing": bearing
+  # }
   #     # Hide any unused subplot slot (8th panel if 7 plots)
   #     fig.delaxes(axes[7])
 
@@ -344,40 +346,40 @@ def eval(render, p_ground_truth):
   #     failed = True
 
   #   env.close()
-  #   return np.array(error)/size, failed, out_of_bounds, np.array(wind), np.array(bearing), np.array(v_x), np.array(v_y), np.array(omega), np.array(pitch), np.array(thrust_left), np.array(thrust_right)
 
-def calc_average_error():
-  iterations = 1000
-  error = []
-  failed_count = 0
-  out_of_bound_count = 0
 
-  for it in tqdm(range(iterations)):
-    final_err, failed, out_of_bounds, wind, bearing, velocity, omega, pitch= eval(render=False)
-    if failed:
-      failed_count += 1
-    elif out_of_bounds:
-      out_of_bound_count += 1
-    else: 
-      error.append(final_err[-1])
-  average = np.mean(np.array(error))
-  print(f"The average steady state error is {average}mm for non truncated case")  
-  print(f"The episodes truncates {failed_count+out_of_bound_count} out of {iterations} time. {out_of_bound_count} went out of bounds and {failed_count} went 90 degrees")  
+# def calc_average_error():
+#   iterations = 1000
+#   error = []
+#   failed_count = 0
+#   out_of_bound_count = 0
 
-  kde = gaussian_kde(error)
-  x_vals = np.linspace(min(error), max(error), 200)  # smooth x-axis
-  y_vals = kde(x_vals)
+#   for it in tqdm(range(iterations)):
+#     final_err, failed, out_of_bounds, wind, bearing, velocity, omega, pitch= eval(render=False)
+#     if failed:
+#       failed_count += 1
+#     elif out_of_bounds:
+#       out_of_bound_count += 1
+#     else: 
+#       error.append(final_err[-1])
+#   average = np.mean(np.array(error))
+#   print(f"The average steady state error is {average}mm for non truncated case")  
+#   print(f"The episodes truncates {failed_count+out_of_bound_count} out of {iterations} time. {out_of_bound_count} went out of bounds and {failed_count} went 90 degrees")  
 
-  # Plot KDE
-  plt.plot(x_vals, y_vals, color='blue')
-  plt.fill_between(x_vals, y_vals, alpha=0.3, color='blue')
-  plt.xlabel("Error")
-  plt.ylabel("Density")
-  plt.title(f"KDE Curve of Error: Average = {average: .2f}mm over {iterations-failed_count} iterations where it is not truncated. It failed {failed_count+out_of_bound_count} times")
-  plt.show()
+#   kde = gaussian_kde(error)
+#   x_vals = np.linspace(min(error), max(error), 200)  # smooth x-axis
+#   y_vals = kde(x_vals)
 
-  # 4. Display the plot
-  plt.show()
+#   # Plot KDE
+#   plt.plot(x_vals, y_vals, color='blue')
+#   plt.fill_between(x_vals, y_vals, alpha=0.3, color='blue')
+#   plt.xlabel("Error")
+#   plt.ylabel("Density")
+#   plt.title(f"KDE Curve of Error: Average = {average: .2f}mm over {iterations-failed_count} iterations where it is not truncated. It failed {failed_count+out_of_bound_count} times")
+#   plt.show()
+
+#   # 4. Display the plot
+#   plt.show()
 
 
 if __name__ == "__main__":

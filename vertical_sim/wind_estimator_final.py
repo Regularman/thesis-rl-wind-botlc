@@ -80,32 +80,24 @@ def create_sliding_windows_vectorized(data, window_size):
     return windows
 
 def generate_training_batch(p_ground_truth, batch_size=BATCH_SIZE):
-    """
-    Generate multiple training episodes in parallel
-    """
-    def generate_single_episode():
-        distance, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False, p_ground_truth=p_ground_truth)
-        
+
+    episodes = []
+    distance, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False, p_ground_truth=p_ground_truth)
+    for i in range(batch_size):
         # Convert to tensors on CPU first, then move to device in DataLoader
         training_data = torch.stack([
-            torch.tensor(distance, dtype=torch.float32),
-            torch.tensor(bearing, dtype=torch.float32),
-            torch.tensor(omega, dtype=torch.float32),
-            torch.tensor(pitch, dtype=torch.float32),
-            torch.tensor(np.array(v_x), dtype=torch.float32),
-            torch.tensor(np.array(v_y), dtype=torch.float32),
-            torch.tensor(action_left, dtype=torch.float32),
-            torch.tensor(action_right, dtype=torch.float32)
+            torch.tensor(distance[i], dtype=torch.float32),
+            torch.tensor(bearing[i], dtype=torch.float32),
+            torch.tensor(omega[i], dtype=torch.float32),
+            torch.tensor(pitch[i], dtype=torch.float32),
+            torch.tensor(np.array(v_x[i]), dtype=torch.float32),
+            torch.tensor(np.array(v_y[i]), dtype=torch.float32),
+            torch.tensor(action_left[i], dtype=torch.float32),
+            torch.tensor(action_right[i], dtype=torch.float32)
         ], dim=-1)
-        
-        wind_along = torch.tensor(wind[:, 0], dtype=torch.float32)
-        
-        return training_data, wind_along
-
-    # Generate multiple episodes
-    episodes = []
-    for _ in range(batch_size):
-        episodes.append(generate_single_episode())
+        wind_along = torch.tensor(wind[i][:, 0], dtype=torch.float32)
+    
+        episodes.append((training_data, wind_along))
     
     return episodes
 
@@ -141,12 +133,7 @@ def prepare_batch_data(episodes):
     
     return batch_windows, batch_targets
 
-def train_optimized(iteration):
-    """
-    Calculate the probability for the wind_estimator to be used 
-    """
-    p_ground_truth = 1 - iteration/HANDOFF_ITERATIONS
-
+def train_optimized(p_ground_truth):
     """
     Optimized training function with vectorization and parallelization
     """
@@ -255,7 +242,7 @@ def eval_wind_optimized():
     model.eval()
 
     print("Generating test data...")
-    distance, failed, out_of_bounds, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False)
+    distance, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False)
     
     # Prepare test data on CPU first, then move to GPU
     training_data = torch.stack([
@@ -396,8 +383,12 @@ if __name__ == "__main__":
     # # Train optimized model
 
     for it in range(HANDOFF_ITERATIONS):
-        model = train_optimized(iteration = it)
-        train()
+        """
+        Calculate the probability for the wind_estimator to be used 
+        """
+        p_ground_truth = 1 - it/HANDOFF_ITERATIONS
+        model = train_optimized(p_ground_truth=p_ground_truth)
+        train(p_ground_truth=p_ground_truth)
     
     # Evaluate optimized model
-    eval_wind_optimized()
+    # eval_wind_optimized()
