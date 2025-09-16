@@ -14,6 +14,13 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import time
 from vertical_sim import train
 
+# Device configuration
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+if device.type == 'cuda':
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
 '''
 Optimized Hyperparameter settings for better GPU utilization
 '''
@@ -27,12 +34,10 @@ NUM_WORKERS = 32  # For DataLoader parallelization
 PREFETCH_FACTOR = 8  # For DataLoader optimization
 HANDOFF_ITERATIONS = 30
 
-# Device configuration
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device: {device}")
-if device.type == 'cuda':
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+'''
+Generate a bunch of episodes in the beginning, rather than generating every iteration in the loop
+'''
+# distance, wind, bearing, v_x, v_y, omega, pitch, action_left, action_right = eval(render=False, p_ground_truth=p_ground_truth)
 
 class LSTM_wind_estimator(nn.Module):
     def __init__(self, hidden_dim, input_size, num_layers=4, dropout=0.1):
